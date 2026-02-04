@@ -16,6 +16,15 @@ type App struct {
 	Database Database
 	Redis    Redis
 	Agent    Agent
+	Security Security
+}
+
+// Security holds security policy configuration
+type Security struct {
+	DefaultUserHourlyLimit string `env:"SEC_USER_HOURLY_LIMIT" env-default:"1000000000000000000"`   // 1 ETH (wei)
+	DefaultUserDailyLimit  string `env:"SEC_USER_DAILY_LIMIT"  env-default:"10000000000000000000"`  // 10 ETH (wei)
+	GlobalHourlyLimit      string `env:"SEC_GLOBAL_HOURLY_LIMIT" env-default:"100000000000000000000"` // 100 ETH (wei)
+	GlobalDailyLimit       string `env:"SEC_GLOBAL_DAILY_LIMIT"  env-default:"1000000000000000000000"` // 1000 ETH (wei)
 }
 
 // Auth holds authentication configuration

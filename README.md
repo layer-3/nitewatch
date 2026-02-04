@@ -15,13 +15,13 @@ Before countersigning any withdrawal request, Nitewatch enforces the following l
 
 1. **Payload Validation:** Verifies the integrity and authenticity of the withdrawal payload, including:
     * Signatures: Validates the User's signature and the Broker/Exchange's signature.
-    * Data: Checks `user_address`, `email`, `token`, `amount`, `chainId`, and `nonce`.
-2. **Two-Factor Authentication:** Triggers and verifies an Email OTP (One-Time Password) flow.
-3. **Rate Limiting & Quotas:** Checks withdrawal limits to prevent draining attacks:
+    * Data: Checks `user_address`, `email` (if provided), `token`, `amount`, `chainId`, and `nonce`.
+2. **Rate Limiting & Quotas:** Checks withdrawal limits to prevent draining attacks:
     * User Hourly Limit
     * User Daily Limit
     * Global Hourly Limit
     * Global Daily Limit
+3. *(Planned)* **Two-Factor Authentication:** Email OTP (One-Time Password) flow.
 4. *(Planned)* **Trade Verification:** Future support for verifying signed orders and counter-signed trades to ensure withdrawals match trading activity.
 
 ## User Flow
@@ -48,14 +48,7 @@ sequenceDiagram
     Note over Frontend, Nitewatch: Secondary Authorization (Nitewatch)
     Frontend->>Nitewatch: POST /v1/withdrawals (Payload, UserSig, BrokerSig)
     Nitewatch->>Nitewatch: Validate Signatures & Payload
-    Nitewatch->>Nitewatch: Check Initial Limits
-    Nitewatch->>User: Send Email OTP
-    Nitewatch-->>Frontend: 200 OK (id: <uuid>, status: "pending_otp")
-
-    User->>Frontend: Enter PIN Code
-    Frontend->>Nitewatch: POST /v1/withdrawals/<uuid>/authorize (PIN)
-    Nitewatch->>Nitewatch: Verify PIN
-    Nitewatch->>Nitewatch: Verify Final Limits (Hourly/Daily)
+    Nitewatch->>Nitewatch: Verify Limits (Hourly/Daily)
     Nitewatch->>Nitewatch: Sign(Payload) with KMS Key
     Nitewatch-->>Frontend: 200 OK (NitewatchSignature)
 
@@ -71,7 +64,7 @@ The following is a draft of the core REST API endpoints provided by Nitewatch.
 
 ### 1. Initiate Withdrawal
 
-Submit a pre-signed withdrawal request to Nitewatch. This triggers the validation process and sends an OTP to the user's email.
+Submit a pre-signed withdrawal request to Nitewatch. This triggers the validation process and, if successful, returns the Nitewatch signature.
 
 * **Endpoint:** `POST /v1/withdrawals`
 * **Request Body:**
@@ -96,39 +89,12 @@ Submit a pre-signed withdrawal request to Nitewatch. This triggers the validatio
     ```json
     {
       "withdrawal_id": "550e8400-e29b-41d4-a716-446655440000",
-      "status": "pending_authorization",
-      "message": "OTP sent to user@example.com",
-      "expires_in": 300
-    }
-    ```
-
-### 2. Authorize Withdrawal
-
-Submit the OTP received via email to finalize the security check and obtain the Nitewatch signature.
-
-* **Endpoint:** `POST /v1/withdrawals/{withdrawal_id}/authorize`
-* **Request Body:**
-
-    ```json
-    {
-      "pin_code": "123456"
-    }
-    ```
-
-* **Response (200 OK):**
-
-    ```json
-    {
-      "withdrawal_id": "550e8400-e29b-41d4-a716-446655440000",
       "status": "approved",
       "nitewatch_signature": "0xnitewatch_secure_sig..."
     }
     ```
 
-* **Response (403 Forbidden):**
-  * If the PIN is invalid or limits are exceeded.
-
-### 3. Get Withdrawal Status
+### 2. Get Withdrawal Status
 
 Check the status of an existing withdrawal request.
 
@@ -138,7 +104,7 @@ Check the status of an existing withdrawal request.
     ```json
     {
       "id": "550e8400-e29b-41d4-a716-446655440000",
-      "status": "pending_authorization",
+      "status": "approved",
       "created_at": "2023-10-27T10:00:00Z"
     }
     ```
