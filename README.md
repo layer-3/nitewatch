@@ -26,36 +26,28 @@ Before countersigning any withdrawal request, Nitewatch enforces the following l
 
 ## User Flow
 
-The withdrawal process involves coordination between the User, the Exchange (Broker), Nitewatch, and the Smart Contract.
+The withdrawal process involves coordination between the User, NeoDAX, Nitewatch, and Clearnode.
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor User
-    participant Frontend
-    participant Exchange
+    participant NeoDAX
     participant Nitewatch
-    participant SmartContract
+    participant Clearnode
 
-    Note over User, Exchange: Initial Request & Broker Authorization
-    User->>Frontend: Initiate Withdrawal
-    Frontend->>Frontend: Create Withdrawal Payload
-    User->>Frontend: Sign(Payload)
-    Frontend->>Exchange: Submit Signed Request
-    Exchange->>Exchange: Verify Balance & Risk Checks
-    Exchange->>Frontend: Return BrokerSignature
+    Note over User, NeoDAX: Withdrawal Initiation
+    User->>NeoDAX: Submit Signed Withdraw Request
+    NeoDAX->>NeoDAX: Lock Balance & Countersign
 
-    Note over Frontend, Nitewatch: Secondary Authorization (Nitewatch)
-    Frontend->>Nitewatch: POST /v1/withdrawals (Payload, UserSig, BrokerSig)
-    Nitewatch->>Nitewatch: Validate Signatures & Payload
-    Nitewatch->>Nitewatch: Verify Limits (Hourly/Daily)
-    Nitewatch->>Nitewatch: Sign(Payload) with KMS Key
-    Nitewatch-->>Frontend: 200 OK (NitewatchSignature)
+    Note over NeoDAX, Nitewatch: Security Verification (gRPC)
+    NeoDAX->>Nitewatch: gRPC: Provide Signed Request
+    Nitewatch->>Nitewatch: Validate Signatures
+    Nitewatch->>Nitewatch: Track Spendings
+    Nitewatch-->>NeoDAX: Return Signed State
 
-    Note over Frontend, SmartContract: Blockchain Execution
-    Frontend->>SmartContract: withdraw(Payload, UserSig, BrokerSig, NitewatchSig)
-    SmartContract->>SmartContract: Verify All 3 Signatures
-    SmartContract->>User: Transfer Funds
+    Note over NeoDAX, Clearnode: Offchain Execution
+    NeoDAX->>Clearnode: Notify to Execute Transfer (Offchain)
 ```
 
 ## REST API (Draft)
