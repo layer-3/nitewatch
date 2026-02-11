@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"flag"
 	"fmt"
 	"log"
@@ -24,7 +25,7 @@ type server struct {
 	client  *ethclient.Client
 	custody *chain.ICustody
 	chainID *big.Int
-	privKey string
+	privKey *ecdsa.PrivateKey
 }
 
 func (s *server) StartWithdraw(ctx context.Context, req *pb.StartWithdrawRequest) (*pb.StartWithdrawResponse, error) {
@@ -53,12 +54,7 @@ func (s *server) StartWithdraw(ctx context.Context, req *pb.StartWithdrawRequest
 		user.Hex(), token.Hex(), amount.String(), nonce.String())
 
 	// 2. Prepare Transaction Auth
-	key, err := crypto.HexToECDSA(s.privKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse private key: %v", err)
-	}
-
-	auth, err := bind.NewKeyedTransactorWithChainID(key, s.chainID)
+	auth, err := bind.NewKeyedTransactorWithChainID(s.privKey, s.chainID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create transactor: %v", err)
 	}
@@ -73,7 +69,6 @@ func (s *server) StartWithdraw(ctx context.Context, req *pb.StartWithdrawRequest
 	log.Printf("Transaction sent: %s", tx.Hash().Hex())
 
 	// 4. Wait for Mining to get WithdrawalID
-	// We need the receipt to extract the event.
 	receipt, err := bind.WaitMined(ctx, s.client, tx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to wait for transaction mining: %v", err)
@@ -84,19 +79,10 @@ func (s *server) StartWithdraw(ctx context.Context, req *pb.StartWithdrawRequest
 	}
 
 	// 5. Extract WithdrawalID from Logs
-	// We use the Filterer to parse the log.
-	// Since we have the *ICustody instance, we can use a raw filter or just iterate receipt logs.
-	// The generated binding doesn't have a helper to parse a specific log easily without iterating,
-	// but we can look for the event signature.
-	
-	// Instantiate filterer just to access parsing logic if needed, 
-	// but chain.ICustody is also a Filterer.
 	var withdrawalId [32]byte
 	found := false
 
-	// Iterate over logs to find WithdrawStarted
 	for _, logMsg := range receipt.Logs {
-		// Use the generated ParseWithdrawStarted method
 		event, err := s.custody.ParseWithdrawStarted(*logMsg)
 		if err == nil {
 			withdrawalId = event.WithdrawalId
@@ -128,6 +114,12 @@ func main() {
 		log.Fatal("Contract address and private key are required")
 	}
 
+	// Parse private key once at startup
+	key, err := crypto.HexToECDSA(*privateKeyHex)
+	if err != nil {
+		log.Fatalf("Failed to parse private key: %v", err)
+	}
+
 	// Initialize Ethereum Client
 	client, err := ethclient.Dial(*rpcURL)
 	if err != nil {
@@ -157,9 +149,9 @@ func main() {
 		client:  client,
 		custody: custody,
 		chainID: chainID,
-		privKey: *privateKeyHex,
+		privKey: key,
 	})
-	
+
 	// Register reflection service on gRPC server.
 	reflection.Register(s)
 

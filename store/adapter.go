@@ -1,11 +1,11 @@
 package store
 
 import (
+	"fmt"
 	"math/big"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	nw "github.com/layer-3/nitewatch"
@@ -23,22 +23,16 @@ type WithdrawalModel struct {
 	Timestamp    time.Time `gorm:"index"`
 }
 
-// Adapter implements the WithdrawalStore interface using GORM and SQLite.
+// Adapter implements the WithdrawalStore interface using GORM.
 type Adapter struct {
 	db *gorm.DB
 }
 
-// NewAdapter initializes a new GORM adapter with SQLite.
-func NewAdapter(dbPath string) (*Adapter, error) {
-	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
-	if err != nil {
-		return nil, err
-	}
-
+// NewAdapter initializes a new GORM adapter and runs migrations.
+func NewAdapter(db *gorm.DB) (*Adapter, error) {
 	if err := db.AutoMigrate(&WithdrawalModel{}); err != nil {
 		return nil, err
 	}
-
 	return &Adapter{db: db}, nil
 }
 
@@ -57,11 +51,10 @@ func (a *Adapter) Save(w *nw.Withdrawal) error {
 }
 
 // GetTotalWithdrawn calculates the total amount withdrawn for a token since a given time.
+// Summation is performed in Go to preserve big.Int precision (SQLite stores amounts as strings).
 func (a *Adapter) GetTotalWithdrawn(token common.Address, since time.Time) (*big.Int, error) {
 	var withdrawals []WithdrawalModel
-	
-	// Query all withdrawals for the token since the timestamp
-	// Note: We perform summation in Go to ensure big.Int precision as SQLite stores amounts as strings.
+
 	if err := a.db.Where("token = ? AND timestamp >= ?", token.Hex(), since).Find(&withdrawals).Error; err != nil {
 		return nil, err
 	}
@@ -69,9 +62,10 @@ func (a *Adapter) GetTotalWithdrawn(token common.Address, since time.Time) (*big
 	total := new(big.Int)
 	for _, w := range withdrawals {
 		amount, ok := new(big.Int).SetString(w.Amount, 10)
-		if ok {
-			total.Add(total, amount)
+		if !ok {
+			return nil, fmt.Errorf("corrupted amount in withdrawal %s: %q", w.WithdrawalID, w.Amount)
 		}
+		total.Add(total, amount)
 	}
 
 	return total, nil

@@ -15,6 +15,8 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"gopkg.in/yaml.v3"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 
 	nw "github.com/layer-3/nitewatch"
 	"github.com/layer-3/nitewatch/chain"
@@ -38,7 +40,12 @@ func main() {
 	}
 
 	// 1. Initialize Store
-	db, err := store.NewAdapter(*dbPath)
+	gormDB, err := gorm.Open(sqlite.Open(*dbPath), &gorm.Config{})
+	if err != nil {
+		log.Fatalf("Failed to open database: %v", err)
+	}
+
+	db, err := store.NewAdapter(gormDB)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
@@ -78,23 +85,21 @@ func main() {
 	}
 
 	// 5. Setup Contract Binding
-	custodyContract, err := chain.NewICustody(common.HexToAddress(*contractAddr), client)
+	addr := common.HexToAddress(*contractAddr)
+	custodyContract, err := chain.NewICustody(addr, client)
 	if err != nil {
 		log.Fatalf("Failed to bind contract: %v", err)
 	}
 
 	// 6. Setup Listener
-	listener, err := chain.NewListener(client, common.HexToAddress(*contractAddr), *confirmations)
-	if err != nil {
-		log.Fatalf("Failed to create listener: %v", err)
-	}
+	listener := chain.NewListener(client, custodyContract, *confirmations)
 
 	// 7. Start Watching
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	withdrawals := make(chan *chain.ICustodyWithdrawStarted)
-	
+
 	// Handle shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -127,7 +132,7 @@ func main() {
 		// Finalize
 		txAuth := *auth
 		txAuth.Context = ctx
-		
+
 		tx, err := custodyContract.FinalizeWithdraw(&txAuth, event.WithdrawalId)
 		if err != nil {
 			log.Printf("Failed to finalize withdrawal %x: %v", event.WithdrawalId, err)
@@ -144,7 +149,7 @@ func main() {
 
 		if receipt.Status == 1 {
 			log.Printf("Withdrawal %x finalized successfully on-chain.", event.WithdrawalId)
-			
+
 			// Record usage in DB
 			record := &nw.Withdrawal{
 				WithdrawalID: event.WithdrawalId,
