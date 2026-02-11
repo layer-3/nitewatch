@@ -39,23 +39,19 @@ contract SimpleCustody is ICustody, AccessControl, ReentrancyGuard {
         emit Deposited(msg.sender, token, amount);
     }
 
-    function startWithdraw(
-        address user,
-        address token,
-        uint256 amount,
-        uint256 nonce
-    ) external override onlyRole(NEODAX_ROLE) nonReentrant returns (bytes32 withdrawalId) {
+    function startWithdraw(address user, address token, uint256 amount, uint256 nonce)
+        external
+        override
+        onlyRole(NEODAX_ROLE)
+        nonReentrant
+        returns (bytes32 withdrawalId)
+    {
         withdrawalId = keccak256(abi.encode(user, token, amount, nonce));
-        
+
         require(!withdrawals[withdrawalId].exists, "SimpleCustody: withdrawal already exists");
 
-        withdrawals[withdrawalId] = WithdrawalRequest({
-            user: user,
-            token: token,
-            amount: amount,
-            exists: true,
-            finalized: false
-        });
+        withdrawals[withdrawalId] =
+            WithdrawalRequest({user: user, token: token, amount: amount, exists: true, finalized: false});
 
         emit WithdrawStarted(withdrawalId, user, token, amount, nonce);
     }
@@ -68,7 +64,7 @@ contract SimpleCustody is ICustody, AccessControl, ReentrancyGuard {
         request.finalized = true;
 
         if (request.token == address(0)) {
-            (bool success, ) = request.user.call{value: request.amount}("");
+            (bool success,) = request.user.call{value: request.amount}("");
             require(success, "SimpleCustody: ETH transfer failed");
         } else {
             IERC20(request.token).safeTransfer(request.user, request.amount);

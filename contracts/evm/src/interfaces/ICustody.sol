@@ -7,11 +7,7 @@ interface ICustody {
 
     /// @notice Emitted when a withdrawal is initiated by NeoDAX.
     event WithdrawStarted(
-        bytes32 indexed withdrawalId,
-        address indexed user,
-        address indexed token,
-        uint256 amount,
-        uint256 nonce
+        bytes32 indexed withdrawalId, address indexed user, address indexed token, uint256 amount, uint256 nonce
     );
 
     /// @notice Emitted when a withdrawal is finalized by Nitewatch.
@@ -30,12 +26,9 @@ interface ICustody {
     /// @param amount The amount to withdraw.
     /// @param nonce A unique nonce to prevent replay attacks.
     /// @return withdrawalId The unique identifier for this withdrawal request.
-    function startWithdraw(
-        address user,
-        address token,
-        uint256 amount,
-        uint256 nonce
-    ) external returns (bytes32 withdrawalId);
+    function startWithdraw(address user, address token, uint256 amount, uint256 nonce)
+        external
+        returns (bytes32 withdrawalId);
 
     /// @notice Finalizes a withdrawal request (called by Nitewatch).
     /// @dev Verifies the withdrawalId exists and executes the transfer.

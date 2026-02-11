@@ -5,7 +5,6 @@ import {Test} from "forge-std/Test.sol";
 import {SimpleCustody} from "../src/SimpleCustody.sol";
 import {ICustody} from "../src/interfaces/ICustody.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
 contract MockERC20 is ERC20 {
     constructor() ERC20("Mock", "MCK") {}
@@ -105,7 +104,7 @@ contract SimpleCustodyTest is Test {
         bytes32 id = custody.startWithdraw(user, address(0), amount, nonce);
 
         assertEq(id, expectedId);
-        
+
         // Use a tuple to decode the struct or access fields individually if public getter
         // Since `withdrawals` is public mapping, we can access fields via multiple return values
         (address u, address t, uint256 a, bool exists, bool finalized) = custody.withdrawals(id);
@@ -114,7 +113,7 @@ contract SimpleCustodyTest is Test {
         assertEq(a, amount);
         assertTrue(exists);
         assertFalse(finalized);
-        
+
         vm.stopPrank();
     }
 
@@ -128,7 +127,7 @@ contract SimpleCustodyTest is Test {
     function test_startWithdraw_duplicate() public {
         vm.startPrank(neodax);
         custody.startWithdraw(user, address(0), 1 ether, 1);
-        
+
         vm.expectRevert("SimpleCustody: withdrawal already exists");
         custody.startWithdraw(user, address(0), 1 ether, 1);
         vm.stopPrank();
@@ -157,10 +156,10 @@ contract SimpleCustodyTest is Test {
         custody.finalizeWithdraw(id);
 
         assertEq(user.balance, preBalance + 1 ether);
-        
-        (, , , , bool finalized) = custody.withdrawals(id);
+
+        (,,,, bool finalized) = custody.withdrawals(id);
         assertTrue(finalized);
-        
+
         vm.stopPrank();
     }
 
@@ -183,10 +182,10 @@ contract SimpleCustodyTest is Test {
         custody.finalizeWithdraw(id);
 
         assertEq(token.balanceOf(user), preBalance + 50e18);
-        
-        (, , , , bool finalized) = custody.withdrawals(id);
+
+        (,,,, bool finalized) = custody.withdrawals(id);
         assertTrue(finalized);
-        
+
         vm.stopPrank();
     }
 
@@ -195,7 +194,7 @@ contract SimpleCustodyTest is Test {
         bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
 
         vm.startPrank(user); // not nitewatch
-        vm.expectRevert(); 
+        vm.expectRevert();
         custody.finalizeWithdraw(id);
         vm.stopPrank();
     }
