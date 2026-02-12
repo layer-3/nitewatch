@@ -96,7 +96,7 @@ contract SimpleCustodyTest is Test {
 
         vm.startPrank(neodax);
 
-        bytes32 expectedId = keccak256(abi.encode(user, address(0), amount, nonce));
+        bytes32 expectedId = keccak256(abi.encode(block.chainid, address(custody), user, address(0), amount, nonce));
 
         vm.expectEmit(true, true, false, true);
         emit ICustody.WithdrawStarted(expectedId, user, address(0), amount, nonce);
@@ -113,6 +113,42 @@ contract SimpleCustodyTest is Test {
         assertEq(a, amount);
         assertTrue(exists);
         assertFalse(finalized);
+
+        vm.stopPrank();
+    }
+
+    function test_deposit_zeroAmount() public {
+        vm.prank(user);
+        vm.expectRevert("SimpleCustody: amount must be greater than 0");
+        custody.deposit{value: 0}(address(0), 0);
+    }
+
+    function test_startWithdraw_zeroAmount() public {
+        vm.startPrank(neodax);
+        vm.expectRevert("SimpleCustody: amount must be greater than 0");
+        custody.startWithdraw(user, address(0), 0, 1);
+        vm.stopPrank();
+    }
+
+    function test_finalizeWithdraw_storageCleared() public {
+        // Setup: deposit first
+        vm.deal(address(custody), 5 ether);
+
+        // Start withdraw
+        vm.prank(neodax);
+        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
+
+        // Finalize
+        vm.startPrank(nitewatch);
+
+        custody.finalizeWithdraw(id);
+
+        (address u, address t, uint256 a, bool exists, bool finalized) = custody.withdrawals(id);
+        assertEq(u, address(0)); // Cleared
+        assertEq(t, address(0)); // Cleared
+        assertEq(a, 0);          // Cleared
+        assertTrue(exists);      // Preserved
+        assertTrue(finalized);   // Preserved
 
         vm.stopPrank();
     }

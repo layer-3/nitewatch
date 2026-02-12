@@ -30,13 +30,17 @@ contract SimpleCustody is ICustody, AccessControl, ReentrancyGuard {
     }
 
     function deposit(address token, uint256 amount) external payable override nonReentrant {
+        require(amount > 0, "SimpleCustody: amount must be greater than 0");
+        uint256 received = amount;
         if (token == address(0)) {
             require(msg.value == amount, "SimpleCustody: msg.value mismatch");
         } else {
             require(msg.value == 0, "SimpleCustody: non-zero msg.value for ERC20");
+            uint256 balanceBefore = IERC20(token).balanceOf(address(this));
             IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+            received = IERC20(token).balanceOf(address(this)) - balanceBefore;
         }
-        emit Deposited(msg.sender, token, amount);
+        emit Deposited(msg.sender, token, received);
     }
 
     function startWithdraw(address user, address token, uint256 amount, uint256 nonce)
@@ -46,7 +50,8 @@ contract SimpleCustody is ICustody, AccessControl, ReentrancyGuard {
         nonReentrant
         returns (bytes32 withdrawalId)
     {
-        withdrawalId = keccak256(abi.encode(user, token, amount, nonce));
+        require(amount > 0, "SimpleCustody: amount must be greater than 0");
+        withdrawalId = keccak256(abi.encode(block.chainid, address(this), user, token, amount, nonce));
 
         require(!withdrawals[withdrawalId].exists, "SimpleCustody: withdrawal already exists");
 
@@ -62,12 +67,22 @@ contract SimpleCustody is ICustody, AccessControl, ReentrancyGuard {
         require(!request.finalized, "SimpleCustody: withdrawal already finalized");
 
         request.finalized = true;
+        address user = request.user;
+        address token = request.token;
+        uint256 amount = request.amount;
 
-        if (request.token == address(0)) {
-            (bool success,) = request.user.call{value: request.amount}("");
+        // Clear storage to refund gas, but keep 'exists' and 'finalized'
+        request.user = address(0);
+        request.token = address(0);
+        request.amount = 0;
+
+        if (token == address(0)) {
+            require(address(this).balance >= amount, "SimpleCustody: insufficient ETH liquidity");
+            (bool success,) = user.call{value: amount}("");
             require(success, "SimpleCustody: ETH transfer failed");
         } else {
-            IERC20(request.token).safeTransfer(request.user, request.amount);
+            require(IERC20(token).balanceOf(address(this)) >= amount, "SimpleCustody: insufficient ERC20 liquidity");
+            IERC20(token).safeTransfer(user, amount);
         }
 
         emit WithdrawFinalized(withdrawalId, true);
