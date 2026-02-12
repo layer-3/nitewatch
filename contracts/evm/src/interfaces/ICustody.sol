@@ -34,4 +34,9 @@ interface ICustody {
     /// @dev Verifies the withdrawalId exists and executes the transfer.
     /// @param withdrawalId The unique identifier of the withdrawal to finalize.
     function finalizeWithdraw(bytes32 withdrawalId) external;
+
+    /// @notice Rejects a withdrawal request (called by Nitewatch).
+    /// @dev Verifies the withdrawalId exists and marks it as rejected.
+    /// @param withdrawalId The unique identifier of the withdrawal to reject.
+    function rejectWithdraw(bytes32 withdrawalId) external;
 }

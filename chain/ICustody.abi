@@ -32,6 +32,19 @@
   },
   {
     "type": "function",
+    "name": "rejectWithdraw",
+    "inputs": [
+      {
+        "name": "withdrawalId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "startWithdraw",
     "inputs": [
       {

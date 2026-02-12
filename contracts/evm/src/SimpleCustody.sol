@@ -72,4 +72,14 @@ contract SimpleCustody is ICustody, AccessControl, ReentrancyGuard {
 
         emit WithdrawFinalized(withdrawalId, true);
     }
+
+    function rejectWithdraw(bytes32 withdrawalId) external override onlyRole(NITEWATCH_ROLE) nonReentrant {
+        WithdrawalRequest storage request = withdrawals[withdrawalId];
+        require(request.exists, "SimpleCustody: withdrawal not found");
+        require(!request.finalized, "SimpleCustody: withdrawal already finalized");
+
+        request.finalized = true;
+
+        emit WithdrawFinalized(withdrawalId, false);
+    }
 }

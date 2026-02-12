@@ -1,58 +1,63 @@
-# NeoDAX Gateway
+# Nitewatch
 
-NeoDAX Gateway is a micro-service interacting with an EVM on-chain custody contract through the `ICustody` interface. Users can deposit and withdraw funds for the Yellow Network.
+Nitewatch is a package used by **NeoDAX** to interact with an EVM on-chain custody contract through the `ICustody` interface. It provides the security policy engine and the infrastructure to manage deposits and withdrawals.
 
-The custody uses Role-Based Access Control (RBAC) to manage permissions.
+NeoDAX utilizes the Nitewatch package to run two primary processes:
+1.  **Event Daemon**: Produces `ICustody` events by listening to the blockchain and pushing them to an internal Message Queue (MQ).
+2.  **Contract Interface**: An implementation to call smart-contract methods (e.g., starting or finalizing withdrawals).
 
 ## Stack
 
 - **Smart Contracts**: Solidity (Forge)
 - **Backend**: Go
-- **Blockchain**: EVM-compatible chains (first version)
+- **Blockchain**: EVM-compatible chains
 
 ## Features
 
 ### Deposits
 
-Users can deposit from a frontend dApp into the custody contract:
-
-- **ETH** (native)
-- **ERC20 tokens**
+1.  User deposits native ETH or ERC20 tokens into the custody contract via a frontend dApp.
+2.  The **Event Daemon** detects the on-chain event.
+3.  An internal event is fired to the NeoDAX MQ.
+4.  NeoDAX credits the user's balance.
 
 ### Withdrawals
 
-Users can withdraw funds through a two-step process involving two separate micro-services that process the withdrawal request with independent logic:
+Withdrawals are governed by a security policy engine that tracks per-user and global limits (hourly/daily).
 
-- **Cage** — Verifies and locks the user balance on the NeoDAX side and initiates the on-chain withdrawal.
-- **Nitewatch** — Deployed in a high-security isolated environment. Tracks per-user hourly/daily limits and global hourly/daily limits (a security policy engine).
+1.  User requests a withdrawal via the NeoDAX Web API.
+2.  NeoDAX validates the request internally and locks the user's balance.
+3.  NeoDAX uses the Nitewatch package to call `startWithdraw` on the custody contract.
+4.  The **Nitewatch Daemon** listens for the `WithdrawStarted` event, applies the security policy, and then either calls `finalizeWithdraw` or `rejectWithdraw`.
+5.  The **Event Daemon** waits for the outcome (`WithdrawFinalized` or `WithdrawRejected`), fires an internal event, and NeoDAX debits the balance upon successful confirmation.
 
-## Withdrawal Flow
+## Flows
 
-1. User requests a withdrawal on the NeoDAX API.
-2. NeoDAX locks the user's balance and **Cage** calls `startWithdraw` on the custody contract.
-3. **Nitewatch** listens to the blockchain event `WithdrawStarted` and validates the parameters against security policies.
-4. **Nitewatch** calls `finalizeWithdraw` on the contract to complete the transfer.
+### Withdrawal Flow
 
 ```mermaid
 sequenceDiagram
     actor User
-    participant NeoDAX
-    participant Cage
+    participant NeoDAX as NeoDAX (API & MQ)
+    participant NWPkg as Nitewatch Package
     participant Contract as Custody Contract
-    participant Nitewatch
+    participant NWDaemon as Nitewatch Daemon
 
-    Note over User, NeoDAX: Withdrawal Request
+    Note over User, NeoDAX: Request
     User->>NeoDAX: Request withdrawal
-    NeoDAX->>NeoDAX: Lock balance
+    NeoDAX->>NeoDAX: Validate & Lock balance
     
-    Note over Cage, Contract: Initiation
-    NeoDAX->>Cage: Trigger withdrawal
-    Cage->>Contract: startWithdraw()
-    Contract-->>Nitewatch: WithdrawStarted event
+    Note over NWPkg, Contract: Initiation
+    NeoDAX->>NWPkg: startWithdraw()
+    NWPkg->>Contract: on-chain call
+    Contract-->>NWDaemon: WithdrawStarted event
 
-    Note over Nitewatch, Contract: Validation & Finalization
-    Nitewatch->>Nitewatch: Listen & validate parameters
-    Nitewatch->>Contract: finalizeWithdraw()
-    Contract-->>NeoDAX: WithdrawFinalized event
-    NeoDAX->>NeoDAX: Update user balance (confirmed)
+    Note over NWDaemon, Contract: Security Policy & Finalization
+    NWDaemon->>NWDaemon: Apply Security Policy
+    NWDaemon->>Contract: finalizeWithdraw() or rejectWithdraw()
+    
+    Note over NWPkg, NeoDAX: Confirmation
+    Contract-->>NWPkg: WithdrawFinalized/Rejected event
+    NWPkg->>NeoDAX: Fire internal MQ event
+    NeoDAX->>NeoDAX: Debit balance (if finalized)
 ```

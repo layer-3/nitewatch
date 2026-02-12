@@ -98,7 +98,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	withdrawals := make(chan *chain.ICustodyWithdrawStarted)
+	withdrawals := make(chan *nw.WithdrawStartedEvent)
 
 	// Handle shutdown
 	sigCh := make(chan os.Signal, 1)
@@ -121,11 +121,21 @@ func main() {
 	// 8. Process Loop
 	for event := range withdrawals {
 		log.Printf("New withdrawal request: ID=%x User=%s Token=%s Amount=%s",
-			event.WithdrawalId, event.User.Hex(), event.Token.Hex(), event.Amount)
+			event.WithdrawalID, event.User.Hex(), event.Token.Hex(), event.Amount)
 
 		// Check Limits
 		if err := checker.Check(event.Token, event.Amount); err != nil {
-			log.Printf("Withdrawal %x blocked by policy: %v", event.WithdrawalId, err)
+			log.Printf("Withdrawal %x blocked by policy: %v. Rejecting on-chain...", event.WithdrawalID, err)
+			
+			txAuth := *auth
+			txAuth.Context = ctx
+			tx, err := custodyContract.RejectWithdraw(&txAuth, event.WithdrawalID)
+			if err != nil {
+				log.Printf("Failed to reject withdrawal %x: %v", event.WithdrawalID, err)
+			} else {
+				log.Printf("Sent reject tx: %s for withdrawal %x", tx.Hash().Hex(), event.WithdrawalID)
+				bind.WaitMined(ctx, client, tx)
+			}
 			continue
 		}
 
@@ -133,13 +143,13 @@ func main() {
 		txAuth := *auth
 		txAuth.Context = ctx
 
-		tx, err := custodyContract.FinalizeWithdraw(&txAuth, event.WithdrawalId)
+		tx, err := custodyContract.FinalizeWithdraw(&txAuth, event.WithdrawalID)
 		if err != nil {
-			log.Printf("Failed to finalize withdrawal %x: %v", event.WithdrawalId, err)
+			log.Printf("Failed to finalize withdrawal %x: %v", event.WithdrawalID, err)
 			continue
 		}
 
-		log.Printf("Sent finalize tx: %s for withdrawal %x", tx.Hash().Hex(), event.WithdrawalId)
+		log.Printf("Sent finalize tx: %s for withdrawal %x", tx.Hash().Hex(), event.WithdrawalID)
 
 		receipt, err := bind.WaitMined(ctx, client, tx)
 		if err != nil {
@@ -148,11 +158,11 @@ func main() {
 		}
 
 		if receipt.Status == 1 {
-			log.Printf("Withdrawal %x finalized successfully on-chain.", event.WithdrawalId)
+			log.Printf("Withdrawal %x finalized successfully on-chain.", event.WithdrawalID)
 
 			// Record usage in DB
 			record := &nw.Withdrawal{
-				WithdrawalID: event.WithdrawalId,
+				WithdrawalID: event.WithdrawalID,
 				User:         event.User,
 				Token:        event.Token,
 				Amount:       event.Amount,
@@ -162,10 +172,10 @@ func main() {
 			}
 
 			if err := checker.Record(record); err != nil {
-				log.Printf("Failed to record withdrawal %x in DB: %v", event.WithdrawalId, err)
+				log.Printf("Failed to record withdrawal %x in DB: %v", event.WithdrawalID, err)
 			}
 		} else {
-			log.Printf("Withdrawal %x finalization tx failed (reverted).", event.WithdrawalId)
+			log.Printf("Withdrawal %x finalization tx failed (reverted).", event.WithdrawalID)
 		}
 	}
 }
