@@ -9,13 +9,11 @@ contract DeployQuorumCustody is Script {
 
     function run() public {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
-        address admin = vm.envAddress("ADMIN_ADDRESS");
-        address neodax = vm.envAddress("NEODAX_ADDRESS");
         address initialSigner = vm.envAddress("INITIAL_SIGNER_ADDRESS");
 
         vm.startBroadcast(deployerPrivateKey);
 
-        QuorumCustody quorumCustody = new QuorumCustody(admin, neodax, initialSigner);
+        QuorumCustody quorumCustody = new QuorumCustody(initialSigner);
         console.log("QuorumCustody deployed at:", address(quorumCustody));
 
         vm.stopBroadcast();

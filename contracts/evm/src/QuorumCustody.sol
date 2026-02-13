@@ -2,16 +2,14 @@
 pragma solidity ^0.8.20;
 
 import {ICustody} from "./interfaces/ICustody.sol";
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-contract QuorumCustody is ICustody, AccessControl, ReentrancyGuard {
+contract QuorumCustody is ICustody, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    bytes32 public constant NEODAX_ROLE = keccak256("NEODAX_ROLE");
-    uint256 public constant WITHDRAWAL_EXPIRY = 3 days;
+    uint256 public constant WITHDRAWAL_EXPIRY = 1 hours;
 
     struct WithdrawalRequest {
         address user;
@@ -20,25 +18,29 @@ contract QuorumCustody is ICustody, AccessControl, ReentrancyGuard {
         bool exists;
         bool finalized;
         uint256 approvalCount;
+        uint256 requiredQuorum;
         uint256 createdAt;
     }
 
     mapping(bytes32 => WithdrawalRequest) public withdrawals;
-    mapping(bytes32 => mapping(address => bool)) public approvals;
-    
+    mapping(bytes32 => mapping(address => bool)) public withdrawalApprovals;
+
+    // Generic quorum approval for signer operations
+    mapping(bytes32 => uint256) public operationApprovals;
+    mapping(bytes32 => mapping(address => bool)) public operationApproved;
+    uint256 public signerNonce;
+
     address[] public signers;
     mapping(address => bool) public isSigner;
     uint256 public quorum;
 
     event SignerAdded(address indexed signer, uint256 newQuorum);
+    event SignerRemoved(address indexed signer, uint256 newQuorum);
+    event QuorumChanged(uint256 oldQuorum, uint256 newQuorum);
     event WithdrawalApproved(bytes32 indexed withdrawalId, address indexed signer, uint256 currentApprovals);
 
-    constructor(address admin, address neodax, address initialSigner) {
+    constructor(address initialSigner) {
         require(initialSigner != address(0), "QuorumCustody: invalid signer");
-        require(admin != address(0), "QuorumCustody: invalid admin");
-        
-        _grantRole(DEFAULT_ADMIN_ROLE, admin);
-        _grantRole(NEODAX_ROLE, neodax);
 
         signers.push(initialSigner);
         isSigner[initialSigner] = true;
@@ -47,24 +49,70 @@ contract QuorumCustody is ICustody, AccessControl, ReentrancyGuard {
     }
 
     modifier onlySigner() {
-        _checkSigner();
+        require(isSigner[msg.sender], "QuorumCustody: caller is not a signer");
         _;
     }
 
-    function _checkSigner() internal view {
-        require(isSigner[msg.sender], "QuorumCustody: only signer can finalize");
-    }
+    // =========================================================================
+    // Signer Management (each call is a vote; executes when quorum is reached)
+    // =========================================================================
 
-    function addSigner(address signer, uint256 _quorum) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function addSigner(address signer, uint256 _quorum) external onlySigner {
         require(signer != address(0), "QuorumCustody: invalid signer");
         require(!isSigner[signer], "QuorumCustody: already signer");
         require(_quorum > 0 && _quorum <= signers.length + 1, "QuorumCustody: invalid quorum");
 
-        signers.push(signer);
-        isSigner[signer] = true;
-        quorum = _quorum;
-        emit SignerAdded(signer, _quorum);
+        bytes32 opHash = keccak256(abi.encode("addSigner", signer, _quorum, signerNonce));
+        require(!operationApproved[opHash][msg.sender], "QuorumCustody: already approved");
+        operationApproved[opHash][msg.sender] = true;
+        operationApprovals[opHash]++;
+
+        if (operationApprovals[opHash] >= quorum) {
+            signerNonce++;
+            signers.push(signer);
+            isSigner[signer] = true;
+            uint256 oldQuorum = quorum;
+            quorum = _quorum;
+            emit SignerAdded(signer, _quorum);
+            if (_quorum != oldQuorum) emit QuorumChanged(oldQuorum, _quorum);
+        }
     }
+
+    function removeSigner(address signer, uint256 _quorum) external onlySigner {
+        require(isSigner[signer], "QuorumCustody: not a signer");
+        require(signers.length > 1, "QuorumCustody: cannot remove last signer");
+        require(_quorum > 0 && _quorum <= signers.length - 1, "QuorumCustody: invalid quorum");
+
+        bytes32 opHash = keccak256(abi.encode("removeSigner", signer, _quorum, signerNonce));
+        require(!operationApproved[opHash][msg.sender], "QuorumCustody: already approved");
+        operationApproved[opHash][msg.sender] = true;
+        operationApprovals[opHash]++;
+
+        if (operationApprovals[opHash] >= quorum) {
+            signerNonce++;
+            isSigner[signer] = false;
+            uint256 len = signers.length;
+            for (uint256 i = 0; i < len; i++) {
+                if (signers[i] == signer) {
+                    signers[i] = signers[len - 1];
+                    signers.pop();
+                    break;
+                }
+            }
+            uint256 oldQuorum = quorum;
+            quorum = _quorum;
+            emit SignerRemoved(signer, _quorum);
+            if (_quorum != oldQuorum) emit QuorumChanged(oldQuorum, _quorum);
+        }
+    }
+
+    function getSignerCount() external view returns (uint256) {
+        return signers.length;
+    }
+
+    // =========================================================================
+    // Deposit
+    // =========================================================================
 
     function deposit(address token, uint256 amount) external payable override nonReentrant {
         require(amount > 0, "QuorumCustody: amount must be greater than 0");
@@ -80,13 +128,18 @@ contract QuorumCustody is ICustody, AccessControl, ReentrancyGuard {
         emit Deposited(msg.sender, token, received);
     }
 
+    // =========================================================================
+    // Withdrawal
+    // =========================================================================
+
     function startWithdraw(address user, address token, uint256 amount, uint256 nonce)
         external
         override
-        onlyRole(NEODAX_ROLE)
+        onlySigner
         nonReentrant
         returns (bytes32 withdrawalId)
     {
+        require(user != address(0), "QuorumCustody: invalid user");
         require(amount > 0, "QuorumCustody: amount must be greater than 0");
         withdrawalId = keccak256(abi.encode(block.chainid, address(this), user, token, amount, nonce));
 
@@ -99,6 +152,7 @@ contract QuorumCustody is ICustody, AccessControl, ReentrancyGuard {
             exists: true,
             finalized: false,
             approvalCount: 0,
+            requiredQuorum: quorum,
             createdAt: block.timestamp
         });
 
@@ -110,45 +164,25 @@ contract QuorumCustody is ICustody, AccessControl, ReentrancyGuard {
         require(request.exists, "QuorumCustody: withdrawal not found");
         require(!request.finalized, "QuorumCustody: withdrawal already finalized");
         require(block.timestamp <= request.createdAt + WITHDRAWAL_EXPIRY, "QuorumCustody: withdrawal expired");
-        require(!approvals[withdrawalId][msg.sender], "QuorumCustody: signer already approved");
+        require(!withdrawalApprovals[withdrawalId][msg.sender], "QuorumCustody: signer already approved");
 
-        approvals[withdrawalId][msg.sender] = true;
+        withdrawalApprovals[withdrawalId][msg.sender] = true;
         request.approvalCount += 1;
-        
+
         emit WithdrawalApproved(withdrawalId, msg.sender, request.approvalCount);
 
-        if (request.approvalCount >= quorum) {
+        if (request.approvalCount >= request.requiredQuorum) {
             _executeWithdrawal(withdrawalId, request);
         }
     }
 
-    function rejectWithdraw(bytes32 withdrawalId) external override nonReentrant {
+    /// @notice Rejects an expired withdrawal. Non-expired withdrawals cannot be rejected;
+    ///         they simply expire if they don't reach quorum within WITHDRAWAL_EXPIRY.
+    function rejectWithdraw(bytes32 withdrawalId) external override onlySigner nonReentrant {
         WithdrawalRequest storage request = withdrawals[withdrawalId];
         require(request.exists, "QuorumCustody: withdrawal not found");
         require(!request.finalized, "QuorumCustody: withdrawal already finalized");
-        
-        // Allow rejection if expired
-        bool isExpired = block.timestamp > request.createdAt + WITHDRAWAL_EXPIRY;
-        
-        if (!isExpired) {
-             // If not expired, only allow signers to reject (maybe explicit rejection logic could be added, 
-             // but for now let's say only expiry allows "public" rejection or just stick to signers/admin)
-             // For safety, let's restrict non-expired rejection to signers or admin.
-             require(isSigner[msg.sender] || hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "QuorumCustody: unauthorized rejection");
-        }
-        
-        // If expired, anyone can trigger rejection (or restrict to roles, but expiration usually implies invalidity)
-        // Let's restrict to relevant parties to prevent griefing if that's a concern, but usually expiry cleanup is open or role based.
-        // Given the prompt "if expiry is reach the withdraw is rejected", implies a condition.
-        // Let's stick to safe roles: Admin, Signers, or Neodax (initiator).
-        if (isExpired) {
-             require(
-                isSigner[msg.sender] || 
-                hasRole(DEFAULT_ADMIN_ROLE, msg.sender) || 
-                hasRole(NEODAX_ROLE, msg.sender), 
-                "QuorumCustody: unauthorized rejection"
-            );
-        }
+        require(block.timestamp > request.createdAt + WITHDRAWAL_EXPIRY, "QuorumCustody: withdrawal not expired");
 
         request.finalized = true;
         emit WithdrawFinalized(withdrawalId, false);

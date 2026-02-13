@@ -17,8 +17,6 @@ contract QuorumCustodyTest is Test {
     QuorumCustody public custody;
     MockERC20 public token;
 
-    address internal admin;
-    address internal neodax;
     address internal user;
     address internal signer1;
     address internal signer2;
@@ -27,164 +25,258 @@ contract QuorumCustodyTest is Test {
     address internal signer5;
 
     function setUp() public {
-        admin = makeAddr("admin");
-        neodax = makeAddr("neodax");
         user = makeAddr("user");
-
         signer1 = makeAddr("signer1");
         signer2 = makeAddr("signer2");
         signer3 = makeAddr("signer3");
         signer4 = makeAddr("signer4");
         signer5 = makeAddr("signer5");
 
-        vm.startPrank(admin);
-        custody = new QuorumCustody(admin, neodax, signer1);
-        vm.stopPrank();
-
+        custody = new QuorumCustody(signer1);
         token = new MockERC20();
     }
+
+    // Helper: set up 5 signers with quorum=3
+    function _setup3of5() internal {
+        // quorum=1 → auto-executes
+        vm.prank(signer1);
+        custody.addSigner(signer2, 1);
+        vm.prank(signer1);
+        custody.addSigner(signer3, 2); // quorum becomes 2
+
+        // quorum=2 → needs two voters
+        vm.prank(signer1);
+        custody.addSigner(signer4, 2);
+        vm.prank(signer2);
+        custody.addSigner(signer4, 2); // executes
+
+        vm.prank(signer1);
+        custody.addSigner(signer5, 3);
+        vm.prank(signer2);
+        custody.addSigner(signer5, 3); // executes, quorum becomes 3
+    }
+
+    // =========================================================================
+    // Initial state
+    // =========================================================================
 
     function test_InitialState() public view {
         assertEq(custody.quorum(), 1);
         assertEq(custody.signers(0), signer1);
         assertTrue(custody.isSigner(signer1));
-    }
-
-    function test_FinalizeWithdraw_1_1_AsSigner() public {
-        vm.deal(address(custody), 1 ether);
-        
-        vm.prank(neodax);
-        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
-
-        vm.prank(signer1);
-        custody.finalizeWithdraw(id);
-
-        (,,,, bool finalized,,) = custody.withdrawals(id);
-        assertTrue(finalized);
-    }
-
-    function test_FinalizeWithdraw_2_2_Progressive() public {
-        vm.prank(admin);
-        custody.addSigner(signer2, 2);
-
-        vm.deal(address(custody), 1 ether);
-        
-        vm.prank(neodax);
-        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
-
-        // Signer 1 approves
-        vm.prank(signer1);
-        custody.finalizeWithdraw(id);
-        
-        // Not finalized yet
-        (,,,, bool finalized,,) = custody.withdrawals(id);
-        assertFalse(finalized);
-        
-        // Signer 2 approves
-        vm.prank(signer2);
-        custody.finalizeWithdraw(id);
-
-        // Finalized
-        (,,,, finalized,,) = custody.withdrawals(id);
-        assertTrue(finalized);
-    }
-
-    function test_FinalizeWithdraw_3_5() public {
-        vm.startPrank(admin);
-        // 1/1 -> 1/2
-        custody.addSigner(signer2, 1);
-        // 1/2 -> 2/3
-        custody.addSigner(signer3, 2);
-        // 2/3 -> 2/4
-        custody.addSigner(signer4, 2);
-        // 2/4 -> 3/5
-        custody.addSigner(signer5, 3);
-        vm.stopPrank();
-
-        assertEq(custody.quorum(), 3);
-        assertEq(custody.signers(4), signer5);
-
-        vm.deal(address(custody), 1 ether);
-        vm.prank(neodax);
-        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
-
-        vm.prank(signer1);
-        custody.finalizeWithdraw(id); // 1/3
-        (,,,, bool finalized,,) = custody.withdrawals(id);
-        assertFalse(finalized);
-
-        vm.prank(signer2);
-        custody.finalizeWithdraw(id); // 2/3
-        (,,,, finalized,,) = custody.withdrawals(id);
-        assertFalse(finalized);
-
-        vm.prank(signer3);
-        custody.finalizeWithdraw(id); // 3/3 -> execute
-        (,,,, finalized,,) = custody.withdrawals(id);
-        assertTrue(finalized);
-    }
-
-    function test_Fail_DuplicateApproval() public {
-        vm.prank(admin);
-        custody.addSigner(signer2, 2);
-
-        vm.deal(address(custody), 1 ether);
-        vm.prank(neodax);
-        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
-
-        vm.prank(signer1);
-        custody.finalizeWithdraw(id);
-
-        vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: signer already approved");
-        custody.finalizeWithdraw(id);
-    }
-    
-    function test_RejectWithdraw_Expired() public {
-        vm.deal(address(custody), 1 ether);
-        vm.prank(neodax);
-        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
-
-        // Advance time past expiry (3 days + 1 sec)
-        vm.warp(block.timestamp + 3 days + 1);
-
-        // Signer 1 rejects
-        vm.prank(signer1);
-        custody.rejectWithdraw(id);
-        
-        (,,,, bool finalized,,) = custody.withdrawals(id);
-        assertTrue(finalized); // Finalized as rejected (or boolean logic in my contract sets finalized=true)
-    }
-
-    function test_Fail_Finalize_Expired() public {
-        vm.deal(address(custody), 1 ether);
-        vm.prank(neodax);
-        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
-
-        // Advance time past expiry
-        vm.warp(block.timestamp + 3 days + 1);
-
-        vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: withdrawal expired");
-        custody.finalizeWithdraw(id);
-    }
-
-    // =========================================================================
-    // Constructor edge cases
-    // =========================================================================
-
-    function test_Fail_Constructor_ZeroAdmin() public {
-        vm.expectRevert("QuorumCustody: invalid admin");
-        new QuorumCustody(address(0), neodax, signer1);
+        assertEq(custody.getSignerCount(), 1);
     }
 
     function test_Fail_Constructor_ZeroSigner() public {
         vm.expectRevert("QuorumCustody: invalid signer");
-        new QuorumCustody(admin, neodax, address(0));
+        new QuorumCustody(address(0));
     }
 
     // =========================================================================
-    // Deposit edge cases
+    // addSigner
+    // =========================================================================
+
+    function test_AddSigner_AutoExecutesAtQuorum1() public {
+        vm.prank(signer1);
+        custody.addSigner(signer2, 2);
+
+        assertTrue(custody.isSigner(signer2));
+        assertEq(custody.quorum(), 2);
+        assertEq(custody.getSignerCount(), 2);
+    }
+
+    function test_AddSigner_PendingAtHigherQuorum() public {
+        vm.prank(signer1);
+        custody.addSigner(signer2, 2); // auto-executes, quorum=2
+
+        vm.prank(signer1);
+        custody.addSigner(signer3, 2); // 1 of 2, pending
+
+        assertFalse(custody.isSigner(signer3));
+        assertEq(custody.getSignerCount(), 2);
+    }
+
+    function test_AddSigner_ExecutesAtQuorum() public {
+        vm.prank(signer1);
+        custody.addSigner(signer2, 2); // auto-executes, quorum=2
+
+        vm.prank(signer1);
+        custody.addSigner(signer3, 2); // 1 of 2
+
+        vm.prank(signer2);
+        custody.addSigner(signer3, 2); // 2 of 2, executes
+
+        assertTrue(custody.isSigner(signer3));
+        assertEq(custody.getSignerCount(), 3);
+    }
+
+    function test_AddSigner_EmitsSignerAdded() public {
+        vm.prank(signer1);
+        vm.expectEmit(true, false, false, true);
+        emit QuorumCustody.SignerAdded(signer2, 2);
+        custody.addSigner(signer2, 2);
+    }
+
+    function test_AddSigner_EmitsQuorumChanged() public {
+        vm.prank(signer1);
+        vm.expectEmit(false, false, false, true);
+        emit QuorumCustody.QuorumChanged(1, 2);
+        custody.addSigner(signer2, 2);
+    }
+
+    function test_AddSigner_NoQuorumChangedWhenSame() public {
+        vm.prank(signer1);
+        custody.addSigner(signer2, 1); // quorum stays 1
+
+        // No QuorumChanged event — just verify quorum didn't change
+        assertEq(custody.quorum(), 1);
+    }
+
+    function test_Fail_AddSigner_NotSigner() public {
+        vm.prank(user);
+        vm.expectRevert("QuorumCustody: caller is not a signer");
+        custody.addSigner(signer2, 1);
+    }
+
+    function test_Fail_AddSigner_ZeroAddress() public {
+        vm.prank(signer1);
+        vm.expectRevert("QuorumCustody: invalid signer");
+        custody.addSigner(address(0), 1);
+    }
+
+    function test_Fail_AddSigner_Duplicate() public {
+        vm.prank(signer1);
+        vm.expectRevert("QuorumCustody: already signer");
+        custody.addSigner(signer1, 1);
+    }
+
+    function test_Fail_AddSigner_QuorumZero() public {
+        vm.prank(signer1);
+        vm.expectRevert("QuorumCustody: invalid quorum");
+        custody.addSigner(signer2, 0);
+    }
+
+    function test_Fail_AddSigner_QuorumTooHigh() public {
+        vm.prank(signer1);
+        vm.expectRevert("QuorumCustody: invalid quorum");
+        custody.addSigner(signer2, 3); // max is signers.length+1 = 2
+    }
+
+    function test_Fail_AddSigner_AlreadyApproved() public {
+        vm.prank(signer1);
+        custody.addSigner(signer2, 2); // auto, quorum=2
+
+        vm.prank(signer1);
+        custody.addSigner(signer3, 2); // 1 of 2
+
+        vm.prank(signer1);
+        vm.expectRevert("QuorumCustody: already approved");
+        custody.addSigner(signer3, 2); // duplicate vote
+    }
+
+    function test_AddSigner_NonceInvalidatesOldApprovals() public {
+        vm.prank(signer1);
+        custody.addSigner(signer2, 2); // auto, quorum=2
+
+        // signer1 votes for signer3 under nonce=1
+        vm.prank(signer1);
+        custody.addSigner(signer3, 2);
+
+        // A different addSigner executes, incrementing nonce to 2
+        vm.prank(signer1);
+        custody.addSigner(signer4, 2);
+        vm.prank(signer2);
+        custody.addSigner(signer4, 2); // executes, nonce becomes 2
+
+        // signer1's old vote for signer3 used nonce=1, now nonce=2 → fresh start
+        // signer1 can vote again with the new nonce
+        vm.prank(signer1);
+        custody.addSigner(signer3, 2); // new opHash, 1 of 2
+
+        assertFalse(custody.isSigner(signer3)); // still pending
+    }
+
+    // =========================================================================
+    // removeSigner
+    // =========================================================================
+
+    function test_RemoveSigner_AutoExecutesAtQuorum1() public {
+        vm.prank(signer1);
+        custody.addSigner(signer2, 1); // quorum stays 1
+
+        vm.prank(signer1);
+        custody.removeSigner(signer2, 1);
+
+        assertFalse(custody.isSigner(signer2));
+        assertEq(custody.getSignerCount(), 1);
+    }
+
+    function test_RemoveSigner_RequiresQuorum() public {
+        vm.prank(signer1);
+        custody.addSigner(signer2, 2); // quorum=2
+
+        // Add signer3 so we can remove signer2
+        vm.prank(signer1);
+        custody.addSigner(signer3, 2);
+        vm.prank(signer2);
+        custody.addSigner(signer3, 2); // executes
+
+        // Remove signer2 (needs 2 votes)
+        vm.prank(signer1);
+        custody.removeSigner(signer2, 2);
+        assertTrue(custody.isSigner(signer2)); // not yet
+
+        vm.prank(signer3);
+        custody.removeSigner(signer2, 2); // executes
+        assertFalse(custody.isSigner(signer2));
+        assertEq(custody.getSignerCount(), 2);
+    }
+
+    function test_RemoveSigner_EmitsEvent() public {
+        vm.prank(signer1);
+        custody.addSigner(signer2, 1);
+
+        vm.prank(signer1);
+        vm.expectEmit(true, false, false, true);
+        emit QuorumCustody.SignerRemoved(signer2, 1);
+        custody.removeSigner(signer2, 1);
+    }
+
+    function test_Fail_RemoveSigner_NotASigner() public {
+        vm.prank(signer1);
+        vm.expectRevert("QuorumCustody: not a signer");
+        custody.removeSigner(signer2, 1);
+    }
+
+    function test_Fail_RemoveSigner_LastSigner() public {
+        vm.prank(signer1);
+        vm.expectRevert("QuorumCustody: cannot remove last signer");
+        custody.removeSigner(signer1, 1);
+    }
+
+    function test_Fail_RemoveSigner_InvalidQuorum() public {
+        vm.prank(signer1);
+        custody.addSigner(signer2, 1);
+
+        vm.prank(signer1);
+        vm.expectRevert("QuorumCustody: invalid quorum");
+        custody.removeSigner(signer2, 2); // removing leaves 1, max quorum is 1
+    }
+
+    function test_RemovedSignerCannotAct() public {
+        vm.prank(signer1);
+        custody.addSigner(signer2, 1);
+
+        vm.prank(signer1);
+        custody.removeSigner(signer2, 1);
+
+        vm.prank(signer2);
+        vm.expectRevert("QuorumCustody: caller is not a signer");
+        custody.startWithdraw(user, address(0), 1 ether, 1);
+    }
+
+    // =========================================================================
+    // Deposit
     // =========================================================================
 
     function test_DepositETH() public {
@@ -245,66 +337,29 @@ contract QuorumCustodyTest is Test {
     }
 
     // =========================================================================
-    // addSigner edge cases
+    // startWithdraw
     // =========================================================================
 
-    function test_Fail_AddSigner_NotAdmin() public {
+    function test_Fail_StartWithdraw_NotSigner() public {
         vm.prank(user);
-        vm.expectRevert();
-        custody.addSigner(signer2, 1);
-    }
-
-    function test_Fail_AddSigner_ZeroAddress() public {
-        vm.prank(admin);
-        vm.expectRevert("QuorumCustody: invalid signer");
-        custody.addSigner(address(0), 1);
-    }
-
-    function test_Fail_AddSigner_Duplicate() public {
-        vm.prank(admin);
-        vm.expectRevert("QuorumCustody: already signer");
-        custody.addSigner(signer1, 1);
-    }
-
-    function test_Fail_AddSigner_QuorumZero() public {
-        vm.prank(admin);
-        vm.expectRevert("QuorumCustody: invalid quorum");
-        custody.addSigner(signer2, 0);
-    }
-
-    function test_Fail_AddSigner_QuorumTooHigh() public {
-        // signers.length is 1, adding signer2 makes it 2, so quorum max is 2
-        vm.prank(admin);
-        vm.expectRevert("QuorumCustody: invalid quorum");
-        custody.addSigner(signer2, 3);
-    }
-
-    function test_AddSigner_EmitsEvent() public {
-        vm.prank(admin);
-        vm.expectEmit(true, false, false, true);
-        emit QuorumCustody.SignerAdded(signer2, 2);
-        custody.addSigner(signer2, 2);
-    }
-
-    // =========================================================================
-    // startWithdraw edge cases
-    // =========================================================================
-
-    function test_Fail_StartWithdraw_NotNeodax() public {
-        vm.prank(user);
-        vm.expectRevert();
+        vm.expectRevert("QuorumCustody: caller is not a signer");
         custody.startWithdraw(user, address(0), 1 ether, 1);
     }
 
+    function test_Fail_StartWithdraw_ZeroUser() public {
+        vm.prank(signer1);
+        vm.expectRevert("QuorumCustody: invalid user");
+        custody.startWithdraw(address(0), address(0), 1 ether, 1);
+    }
+
     function test_Fail_StartWithdraw_ZeroAmount() public {
-        vm.prank(neodax);
+        vm.prank(signer1);
         vm.expectRevert("QuorumCustody: amount must be greater than 0");
         custody.startWithdraw(user, address(0), 0, 1);
     }
 
     function test_Fail_StartWithdraw_DuplicateNonce() public {
-        vm.deal(address(custody), 2 ether);
-        vm.startPrank(neodax);
+        vm.startPrank(signer1);
         custody.startWithdraw(user, address(0), 1 ether, 1);
         vm.expectRevert("QuorumCustody: withdrawal already exists");
         custody.startWithdraw(user, address(0), 1 ether, 1);
@@ -312,7 +367,7 @@ contract QuorumCustodyTest is Test {
     }
 
     function test_StartWithdraw_SameParamsDifferentNonce() public {
-        vm.startPrank(neodax);
+        vm.startPrank(signer1);
         bytes32 id1 = custody.startWithdraw(user, address(0), 1 ether, 1);
         bytes32 id2 = custody.startWithdraw(user, address(0), 1 ether, 2);
         vm.stopPrank();
@@ -320,24 +375,128 @@ contract QuorumCustodyTest is Test {
     }
 
     function test_StartWithdraw_EmitsEvent() public {
-        vm.prank(neodax);
+        vm.prank(signer1);
         vm.expectEmit(true, true, true, true);
-        bytes32 expectedId = keccak256(abi.encode(block.chainid, address(custody), user, address(0), 1 ether, uint256(1)));
+        bytes32 expectedId =
+            keccak256(abi.encode(block.chainid, address(custody), user, address(0), 1 ether, uint256(1)));
         emit ICustody.WithdrawStarted(expectedId, user, address(0), 1 ether, 1);
         custody.startWithdraw(user, address(0), 1 ether, 1);
     }
 
+    function test_StartWithdraw_SnapshotsQuorum() public {
+        vm.prank(signer1);
+        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
+
+        (,,,,,, uint256 requiredQuorum,) = custody.withdrawals(id);
+        assertEq(requiredQuorum, 1);
+    }
+
     // =========================================================================
-    // finalizeWithdraw edge cases
+    // finalizeWithdraw — 1/1
+    // =========================================================================
+
+    function test_FinalizeWithdraw_1_1() public {
+        vm.deal(address(custody), 1 ether);
+
+        vm.prank(signer1);
+        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
+
+        vm.prank(signer1);
+        custody.finalizeWithdraw(id);
+
+        (,,,, bool finalized,,,) = custody.withdrawals(id);
+        assertTrue(finalized);
+    }
+
+    // =========================================================================
+    // finalizeWithdraw — 2/2 progressive
+    // =========================================================================
+
+    function test_FinalizeWithdraw_2_2_Progressive() public {
+        vm.prank(signer1);
+        custody.addSigner(signer2, 2);
+
+        vm.deal(address(custody), 1 ether);
+
+        vm.prank(signer1);
+        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
+
+        vm.prank(signer1);
+        custody.finalizeWithdraw(id);
+        (,,,, bool finalized,,,) = custody.withdrawals(id);
+        assertFalse(finalized);
+
+        vm.prank(signer2);
+        custody.finalizeWithdraw(id);
+        (,,,, finalized,,,) = custody.withdrawals(id);
+        assertTrue(finalized);
+    }
+
+    // =========================================================================
+    // finalizeWithdraw — 3/5
+    // =========================================================================
+
+    function test_FinalizeWithdraw_3_5() public {
+        _setup3of5();
+        assertEq(custody.quorum(), 3);
+        assertEq(custody.getSignerCount(), 5);
+
+        vm.deal(address(custody), 1 ether);
+        vm.prank(signer1);
+        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
+
+        vm.prank(signer1);
+        custody.finalizeWithdraw(id);
+        (,,,, bool finalized,,,) = custody.withdrawals(id);
+        assertFalse(finalized);
+
+        vm.prank(signer2);
+        custody.finalizeWithdraw(id);
+        (,,,, finalized,,,) = custody.withdrawals(id);
+        assertFalse(finalized);
+
+        vm.prank(signer3);
+        custody.finalizeWithdraw(id);
+        (,,,, finalized,,,) = custody.withdrawals(id);
+        assertTrue(finalized);
+    }
+
+    // =========================================================================
+    // finalizeWithdraw — snapshot quorum
+    // =========================================================================
+
+    function test_FinalizeWithdraw_UsesSnapshotQuorum() public {
+        vm.prank(signer1);
+        custody.addSigner(signer2, 1); // quorum=1
+
+        vm.deal(address(custody), 1 ether);
+        vm.prank(signer1);
+        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
+
+        // Raise quorum to 2 AFTER withdrawal was created
+        vm.prank(signer1);
+        custody.addSigner(signer3, 2);
+        assertEq(custody.quorum(), 2);
+
+        // 1 approval should suffice (snapshot quorum was 1)
+        vm.prank(signer1);
+        custody.finalizeWithdraw(id);
+
+        (,,,, bool finalized,,,) = custody.withdrawals(id);
+        assertTrue(finalized);
+    }
+
+    // =========================================================================
+    // finalizeWithdraw — edge cases
     // =========================================================================
 
     function test_Fail_FinalizeWithdraw_NotSigner() public {
         vm.deal(address(custody), 1 ether);
-        vm.prank(neodax);
+        vm.prank(signer1);
         bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
 
         vm.prank(user);
-        vm.expectRevert("QuorumCustody: only signer can finalize");
+        vm.expectRevert("QuorumCustody: caller is not a signer");
         custody.finalizeWithdraw(id);
     }
 
@@ -349,7 +508,7 @@ contract QuorumCustodyTest is Test {
 
     function test_Fail_FinalizeWithdraw_AlreadyFinalized() public {
         vm.deal(address(custody), 1 ether);
-        vm.prank(neodax);
+        vm.prank(signer1);
         bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
 
         vm.prank(signer1);
@@ -360,10 +519,52 @@ contract QuorumCustodyTest is Test {
         custody.finalizeWithdraw(id);
     }
 
+    function test_Fail_DuplicateApproval() public {
+        vm.prank(signer1);
+        custody.addSigner(signer2, 2);
+
+        vm.deal(address(custody), 1 ether);
+        vm.prank(signer1);
+        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
+
+        vm.prank(signer1);
+        custody.finalizeWithdraw(id);
+
+        vm.prank(signer1);
+        vm.expectRevert("QuorumCustody: signer already approved");
+        custody.finalizeWithdraw(id);
+    }
+
+    function test_Fail_Finalize_Expired() public {
+        vm.deal(address(custody), 1 ether);
+        vm.prank(signer1);
+        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
+
+        vm.warp(block.timestamp + 1 hours + 1);
+
+        vm.prank(signer1);
+        vm.expectRevert("QuorumCustody: withdrawal expired");
+        custody.finalizeWithdraw(id);
+    }
+
+    function test_FinalizeWithdraw_ExactExpiryBoundary() public {
+        vm.deal(address(custody), 1 ether);
+        vm.prank(signer1);
+        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
+
+        vm.warp(block.timestamp + 1 hours);
+
+        vm.prank(signer1);
+        custody.finalizeWithdraw(id);
+
+        (,,,, bool finalized,,,) = custody.withdrawals(id);
+        assertTrue(finalized);
+    }
+
     function test_FinalizeWithdraw_ERC20() public {
         token.mint(address(custody), 50e18);
 
-        vm.prank(neodax);
+        vm.prank(signer1);
         bytes32 id = custody.startWithdraw(user, address(token), 50e18, 1);
 
         vm.prank(signer1);
@@ -374,8 +575,7 @@ contract QuorumCustodyTest is Test {
     }
 
     function test_Fail_FinalizeWithdraw_InsufficientETH() public {
-        // No ETH in custody
-        vm.prank(neodax);
+        vm.prank(signer1);
         bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
 
         vm.prank(signer1);
@@ -384,8 +584,7 @@ contract QuorumCustodyTest is Test {
     }
 
     function test_Fail_FinalizeWithdraw_InsufficientERC20() public {
-        // No tokens in custody
-        vm.prank(neodax);
+        vm.prank(signer1);
         bytes32 id = custody.startWithdraw(user, address(token), 50e18, 1);
 
         vm.prank(signer1);
@@ -393,30 +592,16 @@ contract QuorumCustodyTest is Test {
         custody.finalizeWithdraw(id);
     }
 
-    function test_FinalizeWithdraw_ExactExpiryBoundary() public {
-        vm.deal(address(custody), 1 ether);
-        vm.prank(neodax);
-        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
-
-        // Warp to exactly the expiry boundary (should still succeed: <= check)
-        vm.warp(block.timestamp + 3 days);
-
-        vm.prank(signer1);
-        custody.finalizeWithdraw(id);
-
-        (,,,, bool finalized,,) = custody.withdrawals(id);
-        assertTrue(finalized);
-    }
-
     function test_FinalizeWithdraw_ClearsStorage() public {
         vm.deal(address(custody), 1 ether);
-        vm.prank(neodax);
+        vm.prank(signer1);
         bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
 
         vm.prank(signer1);
         custody.finalizeWithdraw(id);
 
-        (address storedUser, address storedToken, uint256 storedAmount, bool exists, bool finalized,,) = custody.withdrawals(id);
+        (address storedUser, address storedToken, uint256 storedAmount, bool exists, bool finalized,,,) =
+            custody.withdrawals(id);
         assertTrue(exists);
         assertTrue(finalized);
         assertEq(storedUser, address(0));
@@ -425,11 +610,11 @@ contract QuorumCustodyTest is Test {
     }
 
     function test_FinalizeWithdraw_EmitsApprovalEvent() public {
-        vm.prank(admin);
+        vm.prank(signer1);
         custody.addSigner(signer2, 2);
 
         vm.deal(address(custody), 1 ether);
-        vm.prank(neodax);
+        vm.prank(signer1);
         bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
 
         vm.prank(signer1);
@@ -440,7 +625,7 @@ contract QuorumCustodyTest is Test {
 
     function test_FinalizeWithdraw_EmitsFinalizedEvent() public {
         vm.deal(address(custody), 1 ether);
-        vm.prank(neodax);
+        vm.prank(signer1);
         bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
 
         vm.prank(signer1);
@@ -453,7 +638,7 @@ contract QuorumCustodyTest is Test {
         vm.deal(address(custody), 5 ether);
         uint256 balanceBefore = user.balance;
 
-        vm.prank(neodax);
+        vm.prank(signer1);
         bytes32 id = custody.startWithdraw(user, address(0), 2 ether, 1);
 
         vm.prank(signer1);
@@ -464,8 +649,42 @@ contract QuorumCustodyTest is Test {
     }
 
     // =========================================================================
-    // rejectWithdraw edge cases
+    // rejectWithdraw (expired-only cleanup)
     // =========================================================================
+
+    function test_RejectWithdraw_Expired() public {
+        vm.prank(signer1);
+        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
+
+        vm.warp(block.timestamp + 1 hours + 1);
+
+        vm.prank(signer1);
+        custody.rejectWithdraw(id);
+
+        (,,,, bool finalized,,,) = custody.withdrawals(id);
+        assertTrue(finalized);
+    }
+
+    function test_RejectWithdraw_EmitsEvent() public {
+        vm.prank(signer1);
+        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
+
+        vm.warp(block.timestamp + 1 hours + 1);
+
+        vm.prank(signer1);
+        vm.expectEmit(true, false, false, true);
+        emit ICustody.WithdrawFinalized(id, false);
+        custody.rejectWithdraw(id);
+    }
+
+    function test_Fail_RejectWithdraw_NotExpired() public {
+        vm.prank(signer1);
+        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
+
+        vm.prank(signer1);
+        vm.expectRevert("QuorumCustody: withdrawal not expired");
+        custody.rejectWithdraw(id);
+    }
 
     function test_Fail_RejectWithdraw_NonExistent() public {
         vm.prank(signer1);
@@ -475,114 +694,46 @@ contract QuorumCustodyTest is Test {
 
     function test_Fail_RejectWithdraw_AlreadyFinalized() public {
         vm.deal(address(custody), 1 ether);
-        vm.prank(neodax);
+        vm.prank(signer1);
         bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
 
         vm.prank(signer1);
         custody.finalizeWithdraw(id);
+
+        vm.warp(block.timestamp + 1 hours + 1);
 
         vm.prank(signer1);
         vm.expectRevert("QuorumCustody: withdrawal already finalized");
         custody.rejectWithdraw(id);
     }
 
-    function test_Fail_RejectWithdraw_UnauthorizedBeforeExpiry() public {
-        vm.prank(neodax);
-        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
-
-        // Random user cannot reject before expiry
-        vm.prank(user);
-        vm.expectRevert("QuorumCustody: unauthorized rejection");
-        custody.rejectWithdraw(id);
-    }
-
-    function test_RejectWithdraw_AdminBeforeExpiry() public {
-        vm.prank(neodax);
-        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
-
-        vm.prank(admin);
-        custody.rejectWithdraw(id);
-
-        (,,,, bool finalized,,) = custody.withdrawals(id);
-        assertTrue(finalized);
-    }
-
-    function test_RejectWithdraw_SignerBeforeExpiry() public {
-        vm.prank(neodax);
-        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
-
+    function test_Fail_RejectWithdraw_NotSigner() public {
         vm.prank(signer1);
-        custody.rejectWithdraw(id);
-
-        (,,,, bool finalized,,) = custody.withdrawals(id);
-        assertTrue(finalized);
-    }
-
-    function test_RejectWithdraw_NeodaxAfterExpiry() public {
-        vm.prank(neodax);
         bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
 
-        vm.warp(block.timestamp + 3 days + 1);
-
-        vm.prank(neodax);
-        custody.rejectWithdraw(id);
-
-        (,,,, bool finalized,,) = custody.withdrawals(id);
-        assertTrue(finalized);
-    }
-
-    function test_Fail_RejectWithdraw_RandomUserAfterExpiry() public {
-        vm.prank(neodax);
-        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
-
-        vm.warp(block.timestamp + 3 days + 1);
+        vm.warp(block.timestamp + 1 hours + 1);
 
         vm.prank(user);
-        vm.expectRevert("QuorumCustody: unauthorized rejection");
-        custody.rejectWithdraw(id);
-    }
-
-    function test_RejectWithdraw_ExactExpiryBoundary_StillNotExpired() public {
-        vm.prank(neodax);
-        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
-
-        // Exactly at boundary: block.timestamp == createdAt + WITHDRAWAL_EXPIRY
-        // Contract checks `>` for expiry, so this is NOT expired
-        vm.warp(block.timestamp + 3 days);
-
-        // Random user should NOT be able to reject (not expired yet)
-        // But neodax doesn't have signer or admin role by default, so even neodax can't reject non-expired
-        // Only signer/admin can reject before expiry
-        vm.prank(user);
-        vm.expectRevert("QuorumCustody: unauthorized rejection");
-        custody.rejectWithdraw(id);
-    }
-
-    function test_RejectWithdraw_EmitsEvent() public {
-        vm.prank(neodax);
-        bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
-
-        vm.prank(signer1);
-        vm.expectEmit(true, false, false, true);
-        emit ICustody.WithdrawFinalized(id, false);
+        vm.expectRevert("QuorumCustody: caller is not a signer");
         custody.rejectWithdraw(id);
     }
 
     // =========================================================================
-    // Quorum lifecycle: reject then re-create with same params + new nonce
+    // Lifecycle: reject expired, then re-create
     // =========================================================================
 
-    function test_RejectThenRecreateWithdrawal() public {
+    function test_RejectExpiredThenRecreate() public {
         vm.deal(address(custody), 1 ether);
 
-        vm.prank(neodax);
+        vm.prank(signer1);
         bytes32 id1 = custody.startWithdraw(user, address(0), 1 ether, 1);
+
+        vm.warp(block.timestamp + 1 hours + 1);
 
         vm.prank(signer1);
         custody.rejectWithdraw(id1);
 
-        // Same params but different nonce succeeds
-        vm.prank(neodax);
+        vm.prank(signer1);
         bytes32 id2 = custody.startWithdraw(user, address(0), 1 ether, 2);
         assertTrue(id1 != id2);
 
@@ -593,33 +744,31 @@ contract QuorumCustodyTest is Test {
     }
 
     // =========================================================================
-    // Partial approval then expiry (approvals don't carry over time)
+    // Partial approval then expiry
     // =========================================================================
 
     function test_PartialApprovalThenExpiry() public {
-        vm.prank(admin);
+        vm.prank(signer1);
         custody.addSigner(signer2, 2);
 
         vm.deal(address(custody), 1 ether);
-        vm.prank(neodax);
+        vm.prank(signer1);
         bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
 
-        // First signer approves
         vm.prank(signer1);
         custody.finalizeWithdraw(id);
 
-        // Time passes, expires before second approval
-        vm.warp(block.timestamp + 3 days + 1);
+        vm.warp(block.timestamp + 1 hours + 1);
 
         vm.prank(signer2);
         vm.expectRevert("QuorumCustody: withdrawal expired");
         custody.finalizeWithdraw(id);
 
-        // Can still reject the expired withdrawal
+        // Clean up expired
         vm.prank(signer1);
         custody.rejectWithdraw(id);
 
-        (,,,, bool finalized,,) = custody.withdrawals(id);
+        (,,,, bool finalized,,,) = custody.withdrawals(id);
         assertTrue(finalized);
     }
 
@@ -630,21 +779,36 @@ contract QuorumCustodyTest is Test {
     function test_MultipleConcurrentWithdrawals() public {
         vm.deal(address(custody), 3 ether);
 
-        vm.startPrank(neodax);
+        vm.startPrank(signer1);
         bytes32 id1 = custody.startWithdraw(user, address(0), 1 ether, 1);
         bytes32 id2 = custody.startWithdraw(user, address(0), 1 ether, 2);
         bytes32 id3 = custody.startWithdraw(user, address(0), 1 ether, 3);
         vm.stopPrank();
 
-        // Finalize id1 and id3, reject id2
         vm.prank(signer1);
         custody.finalizeWithdraw(id1);
-        vm.prank(signer1);
-        custody.rejectWithdraw(id2);
+
+        // id2 left to expire
         vm.prank(signer1);
         custody.finalizeWithdraw(id3);
 
         assertEq(user.balance, 2 ether);
         assertEq(address(custody).balance, 1 ether);
+    }
+
+    // =========================================================================
+    // getSignerCount
+    // =========================================================================
+
+    function test_GetSignerCount() public {
+        assertEq(custody.getSignerCount(), 1);
+
+        vm.prank(signer1);
+        custody.addSigner(signer2, 1);
+        assertEq(custody.getSignerCount(), 2);
+
+        vm.prank(signer1);
+        custody.addSigner(signer3, 1);
+        assertEq(custody.getSignerCount(), 3);
     }
 }
