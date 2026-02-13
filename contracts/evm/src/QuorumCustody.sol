@@ -9,6 +9,19 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 contract QuorumCustody is ICustody, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
+    // ---- errors ----
+    error InvalidSigner();
+    error NotSigner();
+    error AlreadySigner();
+    error InvalidQuorum();
+    error AlreadyApproved();
+    error NotASigner();
+    error CannotRemoveLastSigner();
+    error InvalidUser();
+    error WithdrawalExpired();
+    error SignerAlreadyApproved();
+    error WithdrawalNotExpired();
+
     uint256 public constant WITHDRAWAL_EXPIRY = 1 hours;
 
     struct WithdrawalRequest {
@@ -40,7 +53,7 @@ contract QuorumCustody is ICustody, ReentrancyGuard {
     event WithdrawalApproved(bytes32 indexed withdrawalId, address indexed signer, uint256 currentApprovals);
 
     constructor(address initialSigner) {
-        require(initialSigner != address(0), "QuorumCustody: invalid signer");
+        if (initialSigner == address(0)) revert InvalidSigner();
 
         signers.push(initialSigner);
         isSigner[initialSigner] = true;
@@ -49,7 +62,7 @@ contract QuorumCustody is ICustody, ReentrancyGuard {
     }
 
     modifier onlySigner() {
-        require(isSigner[msg.sender], "QuorumCustody: caller is not a signer");
+        if (!isSigner[msg.sender]) revert NotSigner();
         _;
     }
 
@@ -58,12 +71,12 @@ contract QuorumCustody is ICustody, ReentrancyGuard {
     // =========================================================================
 
     function addSigner(address signer, uint256 _quorum) external onlySigner {
-        require(signer != address(0), "QuorumCustody: invalid signer");
-        require(!isSigner[signer], "QuorumCustody: already signer");
-        require(_quorum > 0 && _quorum <= signers.length + 1, "QuorumCustody: invalid quorum");
+        if (signer == address(0)) revert InvalidSigner();
+        if (isSigner[signer]) revert AlreadySigner();
+        if (_quorum == 0 || _quorum > signers.length + 1) revert InvalidQuorum();
 
         bytes32 opHash = keccak256(abi.encode("addSigner", signer, _quorum, signerNonce));
-        require(!operationApproved[opHash][msg.sender], "QuorumCustody: already approved");
+        if (operationApproved[opHash][msg.sender]) revert AlreadyApproved();
         operationApproved[opHash][msg.sender] = true;
         operationApprovals[opHash]++;
 
@@ -79,12 +92,12 @@ contract QuorumCustody is ICustody, ReentrancyGuard {
     }
 
     function removeSigner(address signer, uint256 _quorum) external onlySigner {
-        require(isSigner[signer], "QuorumCustody: not a signer");
-        require(signers.length > 1, "QuorumCustody: cannot remove last signer");
-        require(_quorum > 0 && _quorum <= signers.length - 1, "QuorumCustody: invalid quorum");
+        if (!isSigner[signer]) revert NotASigner();
+        if (signers.length <= 1) revert CannotRemoveLastSigner();
+        if (_quorum == 0 || _quorum > signers.length - 1) revert InvalidQuorum();
 
         bytes32 opHash = keccak256(abi.encode("removeSigner", signer, _quorum, signerNonce));
-        require(!operationApproved[opHash][msg.sender], "QuorumCustody: already approved");
+        if (operationApproved[opHash][msg.sender]) revert AlreadyApproved();
         operationApproved[opHash][msg.sender] = true;
         operationApprovals[opHash]++;
 
@@ -115,12 +128,12 @@ contract QuorumCustody is ICustody, ReentrancyGuard {
     // =========================================================================
 
     function deposit(address token, uint256 amount) external payable override nonReentrant {
-        require(amount > 0, "QuorumCustody: amount must be greater than 0");
+        if (amount == 0) revert ZeroAmount();
         uint256 received = amount;
         if (token == address(0)) {
-            require(msg.value == amount, "QuorumCustody: msg.value mismatch");
+            if (msg.value != amount) revert MsgValueMismatch();
         } else {
-            require(msg.value == 0, "QuorumCustody: non-zero msg.value for ERC20");
+            if (msg.value != 0) revert NonZeroMsgValueForERC20();
             uint256 balanceBefore = IERC20(token).balanceOf(address(this));
             IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
             received = IERC20(token).balanceOf(address(this)) - balanceBefore;
@@ -139,11 +152,11 @@ contract QuorumCustody is ICustody, ReentrancyGuard {
         nonReentrant
         returns (bytes32 withdrawalId)
     {
-        require(user != address(0), "QuorumCustody: invalid user");
-        require(amount > 0, "QuorumCustody: amount must be greater than 0");
+        if (user == address(0)) revert InvalidUser();
+        if (amount == 0) revert ZeroAmount();
         withdrawalId = keccak256(abi.encode(block.chainid, address(this), user, token, amount, nonce));
 
-        require(!withdrawals[withdrawalId].exists, "QuorumCustody: withdrawal already exists");
+        if (withdrawals[withdrawalId].exists) revert WithdrawalAlreadyExists();
 
         withdrawals[withdrawalId] = WithdrawalRequest({
             user: user,
@@ -161,10 +174,10 @@ contract QuorumCustody is ICustody, ReentrancyGuard {
 
     function finalizeWithdraw(bytes32 withdrawalId) external override onlySigner nonReentrant {
         WithdrawalRequest storage request = withdrawals[withdrawalId];
-        require(request.exists, "QuorumCustody: withdrawal not found");
-        require(!request.finalized, "QuorumCustody: withdrawal already finalized");
-        require(block.timestamp <= request.createdAt + WITHDRAWAL_EXPIRY, "QuorumCustody: withdrawal expired");
-        require(!withdrawalApprovals[withdrawalId][msg.sender], "QuorumCustody: signer already approved");
+        if (!request.exists) revert WithdrawalNotFound();
+        if (request.finalized) revert WithdrawalAlreadyFinalized();
+        if (block.timestamp > request.createdAt + WITHDRAWAL_EXPIRY) revert WithdrawalExpired();
+        if (withdrawalApprovals[withdrawalId][msg.sender]) revert SignerAlreadyApproved();
 
         withdrawalApprovals[withdrawalId][msg.sender] = true;
         request.approvalCount += 1;
@@ -180,9 +193,9 @@ contract QuorumCustody is ICustody, ReentrancyGuard {
     ///         they simply expire if they don't reach quorum within WITHDRAWAL_EXPIRY.
     function rejectWithdraw(bytes32 withdrawalId) external override onlySigner nonReentrant {
         WithdrawalRequest storage request = withdrawals[withdrawalId];
-        require(request.exists, "QuorumCustody: withdrawal not found");
-        require(!request.finalized, "QuorumCustody: withdrawal already finalized");
-        require(block.timestamp > request.createdAt + WITHDRAWAL_EXPIRY, "QuorumCustody: withdrawal not expired");
+        if (!request.exists) revert WithdrawalNotFound();
+        if (request.finalized) revert WithdrawalAlreadyFinalized();
+        if (block.timestamp <= request.createdAt + WITHDRAWAL_EXPIRY) revert WithdrawalNotExpired();
 
         request.finalized = true;
         emit WithdrawFinalized(withdrawalId, false);
@@ -200,11 +213,11 @@ contract QuorumCustody is ICustody, ReentrancyGuard {
         request.amount = 0;
 
         if (token == address(0)) {
-            require(address(this).balance >= amount, "QuorumCustody: insufficient ETH liquidity");
+            if (address(this).balance < amount) revert InsufficientLiquidity();
             (bool success,) = user.call{value: amount}("");
-            require(success, "QuorumCustody: ETH transfer failed");
+            if (!success) revert ETHTransferFailed();
         } else {
-            require(IERC20(token).balanceOf(address(this)) >= amount, "QuorumCustody: insufficient ERC20 liquidity");
+            if (IERC20(token).balanceOf(address(this)) < amount) revert InsufficientLiquidity();
             IERC20(token).safeTransfer(user, amount);
         }
 

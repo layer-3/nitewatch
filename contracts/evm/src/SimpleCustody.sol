@@ -30,12 +30,12 @@ contract SimpleCustody is ICustody, AccessControl, ReentrancyGuard {
     }
 
     function deposit(address token, uint256 amount) external payable override nonReentrant {
-        require(amount > 0, "SimpleCustody: amount must be greater than 0");
+        if (amount == 0) revert ZeroAmount();
         uint256 received = amount;
         if (token == address(0)) {
-            require(msg.value == amount, "SimpleCustody: msg.value mismatch");
+            if (msg.value != amount) revert MsgValueMismatch();
         } else {
-            require(msg.value == 0, "SimpleCustody: non-zero msg.value for ERC20");
+            if (msg.value != 0) revert NonZeroMsgValueForERC20();
             uint256 balanceBefore = IERC20(token).balanceOf(address(this));
             IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
             received = IERC20(token).balanceOf(address(this)) - balanceBefore;
@@ -50,10 +50,10 @@ contract SimpleCustody is ICustody, AccessControl, ReentrancyGuard {
         nonReentrant
         returns (bytes32 withdrawalId)
     {
-        require(amount > 0, "SimpleCustody: amount must be greater than 0");
+        if (amount == 0) revert ZeroAmount();
         withdrawalId = keccak256(abi.encode(block.chainid, address(this), user, token, amount, nonce));
 
-        require(!withdrawals[withdrawalId].exists, "SimpleCustody: withdrawal already exists");
+        if (withdrawals[withdrawalId].exists) revert WithdrawalAlreadyExists();
 
         withdrawals[withdrawalId] =
             WithdrawalRequest({user: user, token: token, amount: amount, exists: true, finalized: false});
@@ -63,8 +63,8 @@ contract SimpleCustody is ICustody, AccessControl, ReentrancyGuard {
 
     function finalizeWithdraw(bytes32 withdrawalId) external override onlyRole(NITEWATCH_ROLE) nonReentrant {
         WithdrawalRequest storage request = withdrawals[withdrawalId];
-        require(request.exists, "SimpleCustody: withdrawal not found");
-        require(!request.finalized, "SimpleCustody: withdrawal already finalized");
+        if (!request.exists) revert WithdrawalNotFound();
+        if (request.finalized) revert WithdrawalAlreadyFinalized();
 
         request.finalized = true;
         address user = request.user;
@@ -77,11 +77,11 @@ contract SimpleCustody is ICustody, AccessControl, ReentrancyGuard {
         request.amount = 0;
 
         if (token == address(0)) {
-            require(address(this).balance >= amount, "SimpleCustody: insufficient ETH liquidity");
+            if (address(this).balance < amount) revert InsufficientLiquidity();
             (bool success,) = user.call{value: amount}("");
-            require(success, "SimpleCustody: ETH transfer failed");
+            if (!success) revert ETHTransferFailed();
         } else {
-            require(IERC20(token).balanceOf(address(this)) >= amount, "SimpleCustody: insufficient ERC20 liquidity");
+            if (IERC20(token).balanceOf(address(this)) < amount) revert InsufficientLiquidity();
             IERC20(token).safeTransfer(user, amount);
         }
 
@@ -90,8 +90,8 @@ contract SimpleCustody is ICustody, AccessControl, ReentrancyGuard {
 
     function rejectWithdraw(bytes32 withdrawalId) external override onlyRole(NITEWATCH_ROLE) nonReentrant {
         WithdrawalRequest storage request = withdrawals[withdrawalId];
-        require(request.exists, "SimpleCustody: withdrawal not found");
-        require(!request.finalized, "SimpleCustody: withdrawal already finalized");
+        if (!request.exists) revert WithdrawalNotFound();
+        if (request.finalized) revert WithdrawalAlreadyFinalized();
 
         request.finalized = true;
 

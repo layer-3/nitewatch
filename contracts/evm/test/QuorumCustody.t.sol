@@ -68,7 +68,7 @@ contract QuorumCustodyTest is Test {
     }
 
     function test_Fail_Constructor_ZeroSigner() public {
-        vm.expectRevert("QuorumCustody: invalid signer");
+        vm.expectRevert(QuorumCustody.InvalidSigner.selector);
         new QuorumCustody(address(0));
     }
 
@@ -134,31 +134,31 @@ contract QuorumCustodyTest is Test {
 
     function test_Fail_AddSigner_NotSigner() public {
         vm.prank(user);
-        vm.expectRevert("QuorumCustody: caller is not a signer");
+        vm.expectRevert(QuorumCustody.NotSigner.selector);
         custody.addSigner(signer2, 1);
     }
 
     function test_Fail_AddSigner_ZeroAddress() public {
         vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: invalid signer");
+        vm.expectRevert(QuorumCustody.InvalidSigner.selector);
         custody.addSigner(address(0), 1);
     }
 
     function test_Fail_AddSigner_Duplicate() public {
         vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: already signer");
+        vm.expectRevert(QuorumCustody.AlreadySigner.selector);
         custody.addSigner(signer1, 1);
     }
 
     function test_Fail_AddSigner_QuorumZero() public {
         vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: invalid quorum");
+        vm.expectRevert(QuorumCustody.InvalidQuorum.selector);
         custody.addSigner(signer2, 0);
     }
 
     function test_Fail_AddSigner_QuorumTooHigh() public {
         vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: invalid quorum");
+        vm.expectRevert(QuorumCustody.InvalidQuorum.selector);
         custody.addSigner(signer2, 3); // max is signers.length+1 = 2
     }
 
@@ -170,7 +170,7 @@ contract QuorumCustodyTest is Test {
         custody.addSigner(signer3, 2); // 1 of 2
 
         vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: already approved");
+        vm.expectRevert(QuorumCustody.AlreadyApproved.selector);
         custody.addSigner(signer3, 2); // duplicate vote
     }
 
@@ -244,13 +244,13 @@ contract QuorumCustodyTest is Test {
 
     function test_Fail_RemoveSigner_NotASigner() public {
         vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: not a signer");
+        vm.expectRevert(QuorumCustody.NotASigner.selector);
         custody.removeSigner(signer2, 1);
     }
 
     function test_Fail_RemoveSigner_LastSigner() public {
         vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: cannot remove last signer");
+        vm.expectRevert(QuorumCustody.CannotRemoveLastSigner.selector);
         custody.removeSigner(signer1, 1);
     }
 
@@ -259,7 +259,7 @@ contract QuorumCustodyTest is Test {
         custody.addSigner(signer2, 1);
 
         vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: invalid quorum");
+        vm.expectRevert(QuorumCustody.InvalidQuorum.selector);
         custody.removeSigner(signer2, 2); // removing leaves 1, max quorum is 1
     }
 
@@ -271,7 +271,7 @@ contract QuorumCustodyTest is Test {
         custody.removeSigner(signer2, 1);
 
         vm.prank(signer2);
-        vm.expectRevert("QuorumCustody: caller is not a signer");
+        vm.expectRevert(QuorumCustody.NotSigner.selector);
         custody.startWithdraw(user, address(0), 1 ether, 1);
     }
 
@@ -315,14 +315,14 @@ contract QuorumCustodyTest is Test {
 
     function test_Fail_DepositZeroAmount() public {
         vm.prank(user);
-        vm.expectRevert("QuorumCustody: amount must be greater than 0");
+        vm.expectRevert(ICustody.ZeroAmount.selector);
         custody.deposit(address(0), 0);
     }
 
     function test_Fail_DepositETH_MsgValueMismatch() public {
         vm.deal(user, 2 ether);
         vm.prank(user);
-        vm.expectRevert("QuorumCustody: msg.value mismatch");
+        vm.expectRevert(ICustody.MsgValueMismatch.selector);
         custody.deposit{value: 0.5 ether}(address(0), 1 ether);
     }
 
@@ -331,7 +331,7 @@ contract QuorumCustodyTest is Test {
         vm.deal(user, 1 ether);
         vm.startPrank(user);
         token.approve(address(custody), 100e18);
-        vm.expectRevert("QuorumCustody: non-zero msg.value for ERC20");
+        vm.expectRevert(ICustody.NonZeroMsgValueForERC20.selector);
         custody.deposit{value: 1 ether}(address(token), 100e18);
         vm.stopPrank();
     }
@@ -342,26 +342,26 @@ contract QuorumCustodyTest is Test {
 
     function test_Fail_StartWithdraw_NotSigner() public {
         vm.prank(user);
-        vm.expectRevert("QuorumCustody: caller is not a signer");
+        vm.expectRevert(QuorumCustody.NotSigner.selector);
         custody.startWithdraw(user, address(0), 1 ether, 1);
     }
 
     function test_Fail_StartWithdraw_ZeroUser() public {
         vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: invalid user");
+        vm.expectRevert(QuorumCustody.InvalidUser.selector);
         custody.startWithdraw(address(0), address(0), 1 ether, 1);
     }
 
     function test_Fail_StartWithdraw_ZeroAmount() public {
         vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: amount must be greater than 0");
+        vm.expectRevert(ICustody.ZeroAmount.selector);
         custody.startWithdraw(user, address(0), 0, 1);
     }
 
     function test_Fail_StartWithdraw_DuplicateNonce() public {
         vm.startPrank(signer1);
         custody.startWithdraw(user, address(0), 1 ether, 1);
-        vm.expectRevert("QuorumCustody: withdrawal already exists");
+        vm.expectRevert(ICustody.WithdrawalAlreadyExists.selector);
         custody.startWithdraw(user, address(0), 1 ether, 1);
         vm.stopPrank();
     }
@@ -496,13 +496,13 @@ contract QuorumCustodyTest is Test {
         bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
 
         vm.prank(user);
-        vm.expectRevert("QuorumCustody: caller is not a signer");
+        vm.expectRevert(QuorumCustody.NotSigner.selector);
         custody.finalizeWithdraw(id);
     }
 
     function test_Fail_FinalizeWithdraw_NonExistent() public {
         vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: withdrawal not found");
+        vm.expectRevert(ICustody.WithdrawalNotFound.selector);
         custody.finalizeWithdraw(bytes32(uint256(999)));
     }
 
@@ -515,7 +515,7 @@ contract QuorumCustodyTest is Test {
         custody.finalizeWithdraw(id);
 
         vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: withdrawal already finalized");
+        vm.expectRevert(ICustody.WithdrawalAlreadyFinalized.selector);
         custody.finalizeWithdraw(id);
     }
 
@@ -531,7 +531,7 @@ contract QuorumCustodyTest is Test {
         custody.finalizeWithdraw(id);
 
         vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: signer already approved");
+        vm.expectRevert(QuorumCustody.SignerAlreadyApproved.selector);
         custody.finalizeWithdraw(id);
     }
 
@@ -543,7 +543,7 @@ contract QuorumCustodyTest is Test {
         vm.warp(block.timestamp + 1 hours + 1);
 
         vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: withdrawal expired");
+        vm.expectRevert(QuorumCustody.WithdrawalExpired.selector);
         custody.finalizeWithdraw(id);
     }
 
@@ -579,7 +579,7 @@ contract QuorumCustodyTest is Test {
         bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
 
         vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: insufficient ETH liquidity");
+        vm.expectRevert(ICustody.InsufficientLiquidity.selector);
         custody.finalizeWithdraw(id);
     }
 
@@ -588,7 +588,7 @@ contract QuorumCustodyTest is Test {
         bytes32 id = custody.startWithdraw(user, address(token), 50e18, 1);
 
         vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: insufficient ERC20 liquidity");
+        vm.expectRevert(ICustody.InsufficientLiquidity.selector);
         custody.finalizeWithdraw(id);
     }
 
@@ -682,13 +682,13 @@ contract QuorumCustodyTest is Test {
         bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
 
         vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: withdrawal not expired");
+        vm.expectRevert(QuorumCustody.WithdrawalNotExpired.selector);
         custody.rejectWithdraw(id);
     }
 
     function test_Fail_RejectWithdraw_NonExistent() public {
         vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: withdrawal not found");
+        vm.expectRevert(ICustody.WithdrawalNotFound.selector);
         custody.rejectWithdraw(bytes32(uint256(999)));
     }
 
@@ -703,7 +703,7 @@ contract QuorumCustodyTest is Test {
         vm.warp(block.timestamp + 1 hours + 1);
 
         vm.prank(signer1);
-        vm.expectRevert("QuorumCustody: withdrawal already finalized");
+        vm.expectRevert(ICustody.WithdrawalAlreadyFinalized.selector);
         custody.rejectWithdraw(id);
     }
 
@@ -714,7 +714,7 @@ contract QuorumCustodyTest is Test {
         vm.warp(block.timestamp + 1 hours + 1);
 
         vm.prank(user);
-        vm.expectRevert("QuorumCustody: caller is not a signer");
+        vm.expectRevert(QuorumCustody.NotSigner.selector);
         custody.rejectWithdraw(id);
     }
 
@@ -761,7 +761,7 @@ contract QuorumCustodyTest is Test {
         vm.warp(block.timestamp + 1 hours + 1);
 
         vm.prank(signer2);
-        vm.expectRevert("QuorumCustody: withdrawal expired");
+        vm.expectRevert(QuorumCustody.WithdrawalExpired.selector);
         custody.finalizeWithdraw(id);
 
         // Clean up expired

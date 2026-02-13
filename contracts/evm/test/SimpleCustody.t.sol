@@ -72,7 +72,7 @@ contract SimpleCustodyTest is Test {
     function test_depositETH_wrongAmount() public {
         vm.deal(user, 2 ether);
         vm.prank(user);
-        vm.expectRevert("SimpleCustody: msg.value mismatch");
+        vm.expectRevert(ICustody.MsgValueMismatch.selector);
         custody.deposit{value: 1 ether}(address(0), 2 ether);
     }
 
@@ -83,7 +83,7 @@ contract SimpleCustodyTest is Test {
         vm.startPrank(user);
         token.approve(address(custody), 100e18);
 
-        vm.expectRevert("SimpleCustody: non-zero msg.value for ERC20");
+        vm.expectRevert(ICustody.NonZeroMsgValueForERC20.selector);
         custody.deposit{value: 1 ether}(address(token), 100e18);
         vm.stopPrank();
     }
@@ -119,13 +119,13 @@ contract SimpleCustodyTest is Test {
 
     function test_deposit_zeroAmount() public {
         vm.prank(user);
-        vm.expectRevert("SimpleCustody: amount must be greater than 0");
+        vm.expectRevert(ICustody.ZeroAmount.selector);
         custody.deposit{value: 0}(address(0), 0);
     }
 
     function test_startWithdraw_zeroAmount() public {
         vm.startPrank(neodax);
-        vm.expectRevert("SimpleCustody: amount must be greater than 0");
+        vm.expectRevert(ICustody.ZeroAmount.selector);
         custody.startWithdraw(user, address(0), 0, 1);
         vm.stopPrank();
     }
@@ -164,7 +164,7 @@ contract SimpleCustodyTest is Test {
         vm.startPrank(neodax);
         custody.startWithdraw(user, address(0), 1 ether, 1);
 
-        vm.expectRevert("SimpleCustody: withdrawal already exists");
+        vm.expectRevert(ICustody.WithdrawalAlreadyExists.selector);
         custody.startWithdraw(user, address(0), 1 ether, 1);
         vm.stopPrank();
     }
@@ -237,7 +237,7 @@ contract SimpleCustodyTest is Test {
 
     function test_finalizeWithdraw_notFound() public {
         vm.startPrank(nitewatch);
-        vm.expectRevert("SimpleCustody: withdrawal not found");
+        vm.expectRevert(ICustody.WithdrawalNotFound.selector);
         custody.finalizeWithdraw(bytes32(uint256(999))); // random id
         vm.stopPrank();
     }
@@ -252,7 +252,7 @@ contract SimpleCustodyTest is Test {
         custody.finalizeWithdraw(id);
 
         vm.startPrank(nitewatch);
-        vm.expectRevert("SimpleCustody: withdrawal already finalized");
+        vm.expectRevert(ICustody.WithdrawalAlreadyFinalized.selector);
         custody.finalizeWithdraw(id);
         vm.stopPrank();
     }
