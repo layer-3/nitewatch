@@ -157,5 +157,45 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "ETHTransferFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientLiquidity",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MsgValueMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NonZeroMsgValueForERC20",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WithdrawalAlreadyExists",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WithdrawalAlreadyFinalized",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WithdrawalNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroAmount",
+    "inputs": []
   }
 ]
