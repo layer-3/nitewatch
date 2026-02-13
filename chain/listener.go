@@ -17,21 +17,21 @@ type HeadSubscriber interface {
 	SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (ethereum.Subscription, error)
 }
 
-// Listener handles monitoring the blockchain for events from the ICustody contract.
+// Listener handles monitoring the blockchain for events from the IWithdraw contract.
 type Listener struct {
 	headSub       HeadSubscriber
-	custody       *ICustody
+	withdraw      *IWithdraw
 	confirmations uint64
 }
 
 // NewListener creates a new Listener instance.
 // headSub: a client supporting header subscriptions (e.g. *ethclient.Client via WebSocket)
-// custody: bound ICustody contract instance
+// withdraw: bound IWithdraw contract instance
 // confirmations: number of block confirmations required before an event is considered final
-func NewListener(headSub HeadSubscriber, custody *ICustody, confirmations uint64) *Listener {
+func NewListener(headSub HeadSubscriber, withdraw *IWithdraw, confirmations uint64) *Listener {
 	return &Listener{
 		headSub:       headSub,
-		custody:       custody,
+		withdraw:      withdraw,
 		confirmations: confirmations,
 	}
 }
@@ -39,56 +39,20 @@ func NewListener(headSub HeadSubscriber, custody *ICustody, confirmations uint64
 // Compile-time check that Listener implements nw.EventListener.
 var _ nw.EventListener = (*Listener)(nil)
 
-// WatchDeposited subscribes to Deposited events and sends confirmed domain events to the sink channel.
-// The sink channel will be closed when the context is cancelled or an error occurs.
-func (l *Listener) WatchDeposited(ctx context.Context, sink chan<- *nw.DepositEvent) error {
-	raw := make(chan *ICustodyDeposited)
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- watchWithConfirmations(ctx, raw, l.confirmations,
-			func(rawSink chan<- *ICustodyDeposited) (ethereum.Subscription, error) {
-				return l.custody.WatchDeposited(&bind.WatchOpts{Context: ctx}, rawSink, nil, nil)
-			},
-			func(ch chan<- *types.Header) (ethereum.Subscription, error) {
-				return l.headSub.SubscribeNewHead(ctx, ch)
-			},
-			func(e *ICustodyDeposited) types.Log { return e.Raw },
-		)
-	}()
-
-	defer close(sink)
-	for ev := range raw {
-		select {
-		case sink <- &nw.DepositEvent{
-			User:        ev.User,
-			Token:       ev.Token,
-			Amount:      ev.Amount,
-			BlockNumber: ev.Raw.BlockNumber,
-			TxHash:      ev.Raw.TxHash,
-		}:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-
-	return <-errCh
-}
-
 // WatchWithdrawStarted subscribes to WithdrawStarted events and sends confirmed domain events to the sink channel.
 func (l *Listener) WatchWithdrawStarted(ctx context.Context, sink chan<- *nw.WithdrawStartedEvent) error {
-	raw := make(chan *ICustodyWithdrawStarted)
+	raw := make(chan *IWithdrawWithdrawStarted)
 
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- watchWithConfirmations(ctx, raw, l.confirmations,
-			func(rawSink chan<- *ICustodyWithdrawStarted) (ethereum.Subscription, error) {
-				return l.custody.WatchWithdrawStarted(&bind.WatchOpts{Context: ctx}, rawSink, nil, nil, nil)
+			func(rawSink chan<- *IWithdrawWithdrawStarted) (ethereum.Subscription, error) {
+				return l.withdraw.WatchWithdrawStarted(&bind.WatchOpts{Context: ctx}, rawSink, nil, nil, nil)
 			},
 			func(ch chan<- *types.Header) (ethereum.Subscription, error) {
 				return l.headSub.SubscribeNewHead(ctx, ch)
 			},
-			func(e *ICustodyWithdrawStarted) types.Log { return e.Raw },
+			func(e *IWithdrawWithdrawStarted) types.Log { return e.Raw },
 		)
 	}()
 
@@ -114,18 +78,18 @@ func (l *Listener) WatchWithdrawStarted(ctx context.Context, sink chan<- *nw.Wit
 
 // WatchWithdrawFinalized subscribes to WithdrawFinalized events and sends confirmed domain events to the sink channel.
 func (l *Listener) WatchWithdrawFinalized(ctx context.Context, sink chan<- *nw.WithdrawFinalizedEvent) error {
-	raw := make(chan *ICustodyWithdrawFinalized)
+	raw := make(chan *IWithdrawWithdrawFinalized)
 
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- watchWithConfirmations(ctx, raw, l.confirmations,
-			func(rawSink chan<- *ICustodyWithdrawFinalized) (ethereum.Subscription, error) {
-				return l.custody.WatchWithdrawFinalized(&bind.WatchOpts{Context: ctx}, rawSink, nil)
+			func(rawSink chan<- *IWithdrawWithdrawFinalized) (ethereum.Subscription, error) {
+				return l.withdraw.WatchWithdrawFinalized(&bind.WatchOpts{Context: ctx}, rawSink, nil)
 			},
 			func(ch chan<- *types.Header) (ethereum.Subscription, error) {
 				return l.headSub.SubscribeNewHead(ctx, ch)
 			},
-			func(e *ICustodyWithdrawFinalized) types.Log { return e.Raw },
+			func(e *IWithdrawWithdrawFinalized) types.Log { return e.Raw },
 		)
 	}()
 

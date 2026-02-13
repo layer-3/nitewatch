@@ -3,7 +3,8 @@ pragma solidity ^0.8.13;
 
 import {Test} from "forge-std/Test.sol";
 import {SimpleCustody} from "../src/SimpleCustody.sol";
-import {ICustody} from "../src/interfaces/ICustody.sol";
+import {IWithdraw} from "../src/interfaces/IWithdraw.sol";
+import {IDeposit} from "../src/interfaces/IDeposit.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract MockERC20 is ERC20 {
@@ -46,7 +47,7 @@ contract SimpleCustodyTest is Test {
         vm.prank(user);
 
         vm.expectEmit(true, true, false, true);
-        emit ICustody.Deposited(user, address(0), 1 ether);
+        emit IDeposit.Deposited(user, address(0), 1 ether);
 
         custody.deposit{value: 1 ether}(address(0), 1 ether);
 
@@ -60,7 +61,7 @@ contract SimpleCustodyTest is Test {
         token.approve(address(custody), 100e18);
 
         vm.expectEmit(true, true, false, true);
-        emit ICustody.Deposited(user, address(token), 100e18);
+        emit IDeposit.Deposited(user, address(token), 100e18);
 
         custody.deposit(address(token), 100e18);
         vm.stopPrank();
@@ -72,7 +73,7 @@ contract SimpleCustodyTest is Test {
     function test_depositETH_wrongAmount() public {
         vm.deal(user, 2 ether);
         vm.prank(user);
-        vm.expectRevert(ICustody.MsgValueMismatch.selector);
+        vm.expectRevert(IDeposit.MsgValueMismatch.selector);
         custody.deposit{value: 1 ether}(address(0), 2 ether);
     }
 
@@ -83,7 +84,7 @@ contract SimpleCustodyTest is Test {
         vm.startPrank(user);
         token.approve(address(custody), 100e18);
 
-        vm.expectRevert(ICustody.NonZeroMsgValueForERC20.selector);
+        vm.expectRevert(IDeposit.NonZeroMsgValueForERC20.selector);
         custody.deposit{value: 1 ether}(address(token), 100e18);
         vm.stopPrank();
     }
@@ -99,7 +100,7 @@ contract SimpleCustodyTest is Test {
         bytes32 expectedId = keccak256(abi.encode(block.chainid, address(custody), user, address(0), amount, nonce));
 
         vm.expectEmit(true, true, false, true);
-        emit ICustody.WithdrawStarted(expectedId, user, address(0), amount, nonce);
+        emit IWithdraw.WithdrawStarted(expectedId, user, address(0), amount, nonce);
 
         bytes32 id = custody.startWithdraw(user, address(0), amount, nonce);
 
@@ -119,13 +120,13 @@ contract SimpleCustodyTest is Test {
 
     function test_deposit_zeroAmount() public {
         vm.prank(user);
-        vm.expectRevert(ICustody.ZeroAmount.selector);
+        vm.expectRevert(IWithdraw.ZeroAmount.selector);
         custody.deposit{value: 0}(address(0), 0);
     }
 
     function test_startWithdraw_zeroAmount() public {
         vm.startPrank(neodax);
-        vm.expectRevert(ICustody.ZeroAmount.selector);
+        vm.expectRevert(IWithdraw.ZeroAmount.selector);
         custody.startWithdraw(user, address(0), 0, 1);
         vm.stopPrank();
     }
@@ -146,9 +147,9 @@ contract SimpleCustodyTest is Test {
         (address u, address t, uint256 a, bool exists, bool finalized) = custody.withdrawals(id);
         assertEq(u, address(0)); // Cleared
         assertEq(t, address(0)); // Cleared
-        assertEq(a, 0);          // Cleared
-        assertTrue(exists);      // Preserved
-        assertTrue(finalized);   // Preserved
+        assertEq(a, 0); // Cleared
+        assertTrue(exists); // Preserved
+        assertTrue(finalized); // Preserved
 
         vm.stopPrank();
     }
@@ -164,7 +165,7 @@ contract SimpleCustodyTest is Test {
         vm.startPrank(neodax);
         custody.startWithdraw(user, address(0), 1 ether, 1);
 
-        vm.expectRevert(ICustody.WithdrawalAlreadyExists.selector);
+        vm.expectRevert(IWithdraw.WithdrawalAlreadyExists.selector);
         custody.startWithdraw(user, address(0), 1 ether, 1);
         vm.stopPrank();
     }
@@ -187,7 +188,7 @@ contract SimpleCustodyTest is Test {
         uint256 preBalance = user.balance;
 
         vm.expectEmit(true, true, false, true);
-        emit ICustody.WithdrawFinalized(id, true);
+        emit IWithdraw.WithdrawFinalized(id, true);
 
         custody.finalizeWithdraw(id);
 
@@ -213,7 +214,7 @@ contract SimpleCustodyTest is Test {
         uint256 preBalance = token.balanceOf(user);
 
         vm.expectEmit(true, true, false, true);
-        emit ICustody.WithdrawFinalized(id, true);
+        emit IWithdraw.WithdrawFinalized(id, true);
 
         custody.finalizeWithdraw(id);
 
@@ -237,7 +238,7 @@ contract SimpleCustodyTest is Test {
 
     function test_finalizeWithdraw_notFound() public {
         vm.startPrank(nitewatch);
-        vm.expectRevert(ICustody.WithdrawalNotFound.selector);
+        vm.expectRevert(IWithdraw.WithdrawalNotFound.selector);
         custody.finalizeWithdraw(bytes32(uint256(999))); // random id
         vm.stopPrank();
     }
@@ -252,7 +253,7 @@ contract SimpleCustodyTest is Test {
         custody.finalizeWithdraw(id);
 
         vm.startPrank(nitewatch);
-        vm.expectRevert(ICustody.WithdrawalAlreadyFinalized.selector);
+        vm.expectRevert(IWithdraw.WithdrawalAlreadyFinalized.selector);
         custody.finalizeWithdraw(id);
         vm.stopPrank();
     }

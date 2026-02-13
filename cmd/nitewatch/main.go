@@ -29,7 +29,7 @@ var limitsConfig []byte
 
 func main() {
 	rpcURL := flag.String("rpc", "ws://127.0.0.1:8545", "Ethereum RPC URL (WebSocket required)")
-	contractAddr := flag.String("contract", "", "ICustody contract address")
+	contractAddr := flag.String("contract", "", "IWithdraw contract address")
 	privateKeyHex := flag.String("key", "", "Private key for finalizing withdrawals (hex)")
 	confirmations := flag.Uint64("confirmations", 12, "Number of block confirmations to wait")
 	dbPath := flag.String("db", "nitewatch.db", "Path to SQLite database")
@@ -86,7 +86,7 @@ func main() {
 
 	// 5. Setup Contract Binding
 	addr := common.HexToAddress(*contractAddr)
-	custodyContract, err := chain.NewICustody(addr, client)
+	custodyContract, err := chain.NewIWithdraw(addr, client)
 	if err != nil {
 		log.Fatalf("Failed to bind contract: %v", err)
 	}

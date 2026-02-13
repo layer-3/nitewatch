@@ -2,6 +2,10 @@
 pragma solidity ^0.8.20;
 
 interface IDeposit {
+    // ---- errors ----
+    error MsgValueMismatch();
+    error NonZeroMsgValueForERC20();
+
     /// @notice Emitted when a user deposits funds into custody.
     event Deposited(address indexed user, address indexed token, uint256 amount);
 

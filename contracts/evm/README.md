@@ -45,22 +45,61 @@ $ forge snapshot
 $ anvil
 ```
 
-### Deploy
+### Deploy QuorumCustody
 
 ```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
+PRIVATE_KEY=<deployer_key> \
+SIGNERS=0xAbc...,0xDef...,0x123... \
+INITIAL_QUORUM=2 \
+  forge script script/DeployQuorumCustody.s.sol --rpc-url $RPC_URL --broadcast
 ```
 
-### Cast
+### Deploy SimpleCustody
 
 ```shell
-$ cast <subcommand>
+PRIVATE_KEY=<deployer_key> \
+ADMIN_ADDRESS=0x... \
+NEODAX_ADDRESS=0x... \
+NITEWATCH_ADDRESS=0x... \
+  forge script script/DeploySimpleCustody.s.sol --rpc-url $RPC_URL --broadcast
 ```
 
-### Help
+### Add Signers
+
+Adds signers to a QuorumCustody contract. When quorum > 1, co-signatures from
+other signers are required (EIP-712 sorted ascending by signer address).
 
 ```shell
-$ forge --help
-$ anvil --help
-$ cast --help
+PRIVATE_KEY=<caller_key> \
+CONTRACT=0x... \
+NEW_SIGNERS=0xAbc...,0xDef... \
+NEW_QUORUM=3 \
+DEADLINE=1999999999 \
+SIGNATURES=0x<sig1>,0x<sig2> \
+  forge script script/AddSigners.s.sol --rpc-url $RPC_URL --broadcast
+```
+
+When quorum is 1, `SIGNATURES` can be omitted:
+
+```shell
+PRIVATE_KEY=<caller_key> \
+CONTRACT=0x... \
+NEW_SIGNERS=0xAbc... \
+NEW_QUORUM=2 \
+DEADLINE=1999999999 \
+  forge script script/AddSigners.s.sol --rpc-url $RPC_URL --broadcast
+```
+
+### Remove Signers
+
+Removes signers from a QuorumCustody contract. Same signature rules apply.
+
+```shell
+PRIVATE_KEY=<caller_key> \
+CONTRACT=0x... \
+SIGNERS_TO_REMOVE=0xAbc... \
+NEW_QUORUM=2 \
+DEADLINE=1999999999 \
+SIGNATURES=0x<sig1> \
+  forge script script/RemoveSigners.s.sol --rpc-url $RPC_URL --broadcast
 ```

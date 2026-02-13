@@ -12,15 +12,6 @@ import (
 
 // --- Domain Events ---
 
-// DepositEvent represents a confirmed Deposited event from the custody contract.
-type DepositEvent struct {
-	User        common.Address
-	Token       common.Address
-	Amount      *big.Int
-	BlockNumber uint64
-	TxHash      common.Hash
-}
-
 // WithdrawStartedEvent represents a confirmed WithdrawStarted event from the custody contract.
 type WithdrawStartedEvent struct {
 	WithdrawalID [32]byte
@@ -55,19 +46,17 @@ type Withdrawal struct {
 
 // --- Interfaces ---
 
-// Custody defines the write operations for the ICustody smart contract.
-// Cage uses StartWithdraw; Nitewatch uses FinalizeWithdraw.
+// Custody defines the write operations for the IWithdraw smart contract.
+// Cage uses StartWithdraw; Nitewatch uses FinalizeWithdraw and RejectWithdraw.
 type Custody interface {
-	Deposit(opts *bind.TransactOpts, token common.Address, amount *big.Int) (*types.Transaction, error)
 	StartWithdraw(opts *bind.TransactOpts, user common.Address, token common.Address, amount *big.Int, nonce *big.Int) (*types.Transaction, error)
 	FinalizeWithdraw(opts *bind.TransactOpts, withdrawalId [32]byte) (*types.Transaction, error)
 	RejectWithdraw(opts *bind.TransactOpts, withdrawalId [32]byte) (*types.Transaction, error)
 }
 
-// EventListener defines the ability to subscribe to ICustody contract events.
+// EventListener defines the ability to subscribe to IWithdraw contract events.
 // The sink channel is closed when the context is cancelled or an error occurs.
 type EventListener interface {
-	WatchDeposited(ctx context.Context, sink chan<- *DepositEvent) error
 	WatchWithdrawStarted(ctx context.Context, sink chan<- *WithdrawStartedEvent) error
 	WatchWithdrawFinalized(ctx context.Context, sink chan<- *WithdrawFinalizedEvent) error
 }

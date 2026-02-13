@@ -1,19 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-interface ICustody {
+interface IWithdraw {
     // ---- errors ----
     error ZeroAmount();
-    error MsgValueMismatch();
-    error NonZeroMsgValueForERC20();
     error WithdrawalAlreadyExists();
     error WithdrawalNotFound();
     error WithdrawalAlreadyFinalized();
     error InsufficientLiquidity();
     error ETHTransferFailed();
-
-    /// @notice Emitted when a user deposits funds into custody.
-    event Deposited(address indexed user, address indexed token, uint256 amount);
 
     /// @notice Emitted when a withdrawal is initiated by NeoDAX.
     event WithdrawStarted(
@@ -22,12 +17,6 @@ interface ICustody {
 
     /// @notice Emitted when a withdrawal is finalized by Nitewatch.
     event WithdrawFinalized(bytes32 indexed withdrawalId, bool success);
-
-    /// @notice Deposit ERC20 tokens or native ETH into custody.
-    /// @dev For native ETH deposits, `token` must be address(0) and `msg.value` must equal `amount`.
-    /// @param token The ERC20 token address, or address(0) for native ETH.
-    /// @param amount The amount to deposit.
-    function deposit(address token, uint256 amount) external payable;
 
     /// @notice Initiates a withdrawal request (called by NeoDAX).
     /// @dev Locks the withdrawal details and emits an event for Nitewatch to verify.
