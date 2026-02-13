@@ -524,17 +524,17 @@ contract QuorumCustodyTest is Test {
         toRemove[1] = signer5;
         uint256 nonce = custody.signerNonce();
 
-        bytes memory sig2 = _signRemoveSigners(signer2Pk, toRemove, 2, nonce, MAX_DEADLINE);
-        bytes memory sig3 = _signRemoveSigners(signer3Pk, toRemove, 2, nonce, MAX_DEADLINE);
+        bytes memory sig2 = _signRemoveSigners(signer2Pk, toRemove, 3, nonce, MAX_DEADLINE);
+        bytes memory sig3 = _signRemoveSigners(signer3Pk, toRemove, 3, nonce, MAX_DEADLINE);
         bytes[] memory sigs = _sortSigs2(signer2, sig2, signer3, sig3);
 
         vm.prank(signer1);
-        custody.removeSigners(toRemove, 2, MAX_DEADLINE, sigs);
+        custody.removeSigners(toRemove, 3, MAX_DEADLINE, sigs);
 
         assertFalse(custody.isSigner(signer4));
         assertFalse(custody.isSigner(signer5));
         assertEq(custody.getSignerCount(), 3);
-        assertEq(custody.quorum(), 2);
+        assertEq(custody.quorum(), 3);
     }
 
     function test_RemoveSigners_EmitsEvent() public {
@@ -1195,11 +1195,11 @@ contract QuorumCustodyTest is Test {
         address[] memory toRemove = new address[](1);
         toRemove[0] = signer2;
         uint256 nonce = custody.signerNonce();
-        bytes memory sig3 = _signRemoveSigners(signer3Pk, toRemove, 1, nonce, MAX_DEADLINE);
+        bytes memory sig3 = _signRemoveSigners(signer3Pk, toRemove, 2, nonce, MAX_DEADLINE);
         bytes[] memory sigs = new bytes[](1);
         sigs[0] = sig3;
         vm.prank(signer1);
-        custody.removeSigners(toRemove, 1, MAX_DEADLINE, sigs);
+        custody.removeSigners(toRemove, 2, MAX_DEADLINE, sigs);
 
         assertFalse(custody.isSigner(signer2));
 
@@ -1263,6 +1263,61 @@ contract QuorumCustodyTest is Test {
         vm.prank(signer1);
         custody.addSigners(newSigners, 1, deadline, _emptySigs());
         assertTrue(custody.isSigner(signer2));
+    }
+
+    // =========================================================================
+    // Exploit: Quorum downgrade via addSigners
+    // =========================================================================
+
+    function test_Exploit_QuorumDowngradeToOneViaAddSigners() public {
+        // Setup: 5 signers, quorum=3 (3-of-5 multi-sig)
+        _setup3of5();
+        vm.deal(address(custody), 10 ether);
+
+        assertEq(custody.quorum(), 3);
+        assertEq(custody.getSignerCount(), 5);
+
+        // A coalition of 3 signers (meeting current quorum) adds a new signer
+        // while simultaneously slashing the quorum to 1.
+        address attacker = makeAddr("attacker");
+        address[] memory newSigners = new address[](1);
+        newSigners[0] = attacker;
+        uint256 nonce = custody.signerNonce();
+
+        // signer2 & signer3 sign off on newQuorum=1; signer1 is the caller (+1 = 3 approvals)
+        bytes memory sig2 = _signAddSigners(signer2Pk, newSigners, 1, nonce, MAX_DEADLINE);
+        bytes memory sig3 = _signAddSigners(signer3Pk, newSigners, 1, nonce, MAX_DEADLINE);
+        bytes[] memory sigs = _sortSigs2(signer2, sig2, signer3, sig3);
+
+        // This SHOULD revert — reducing quorum below the current value must not be allowed.
+        vm.prank(signer1);
+        vm.expectRevert(QuorumCustody.InvalidQuorum.selector);
+        custody.addSigners(newSigners, 1, MAX_DEADLINE, sigs);
+    }
+
+    function test_Exploit_SingleSignerDrainsAfterDowngrade_Blocked() public {
+        // Setup: 5 signers, quorum=3 (3-of-5 multi-sig) holding 10 ETH
+        _setup3of5();
+        vm.deal(address(custody), 10 ether);
+
+        // Coalition of 3 tries to downgrade quorum to 1 via addSigners — now blocked
+        address attacker = makeAddr("attacker");
+        address[] memory newSigners = new address[](1);
+        newSigners[0] = attacker;
+        uint256 nonce = custody.signerNonce();
+
+        bytes memory sig2 = _signAddSigners(signer2Pk, newSigners, 1, nonce, MAX_DEADLINE);
+        bytes memory sig3 = _signAddSigners(signer3Pk, newSigners, 1, nonce, MAX_DEADLINE);
+        bytes[] memory sigs = _sortSigs2(signer2, sig2, signer3, sig3);
+
+        vm.prank(signer1);
+        vm.expectRevert(QuorumCustody.InvalidQuorum.selector);
+        custody.addSigners(newSigners, 1, MAX_DEADLINE, sigs);
+
+        // Quorum unchanged, attacker never added
+        assertEq(custody.quorum(), 3);
+        assertFalse(custody.isSigner(attacker));
+        assertEq(address(custody).balance, 10 ether);
     }
 
     function test_Fail_AddSigners_DeadlineExpired_WithSignatures() public {

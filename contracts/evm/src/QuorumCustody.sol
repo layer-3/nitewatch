@@ -79,7 +79,9 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
     {
         if (block.timestamp > deadline) revert DeadlineExpired();
         if (newSigners.length == 0) revert EmptySignersArray();
-        if (newQuorum == 0 || newQuorum > signers.length + newSigners.length) revert InvalidQuorum();
+        if (newQuorum == 0 || newQuorum < quorum || newQuorum > signers.length + newSigners.length) {
+            revert InvalidQuorum();
+        }
 
         _verifySignatures(
             keccak256(
@@ -106,7 +108,9 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
         if (block.timestamp > deadline) revert DeadlineExpired();
         if (signersToRemove.length == 0) revert EmptySignersArray();
         if (signersToRemove.length >= signers.length) revert CannotRemoveLastSigner();
-        if (newQuorum == 0 || newQuorum > signers.length - signersToRemove.length) revert InvalidQuorum();
+        uint256 remainingCount = signers.length - signersToRemove.length;
+        uint256 minQuorum = quorum < remainingCount ? quorum : remainingCount;
+        if (newQuorum == 0 || newQuorum < minQuorum || newQuorum > remainingCount) revert InvalidQuorum();
 
         _verifySignatures(
             keccak256(
