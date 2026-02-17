@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.30;
 
-import {IWithdraw} from "./interfaces/IWithdraw.sol";
-import {IDeposit} from "./interfaces/IDeposit.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+
+import {IWithdraw} from "./interfaces/IWithdraw.sol";
+import {IDeposit} from "./interfaces/IDeposit.sol";
 
 contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
     using SafeERC20 for IERC20;
