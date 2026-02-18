@@ -34,9 +34,9 @@ contract ThresholdCustodyTest is Test {
 
     // EIP-712 domain values (must match contract constructor)
     bytes32 constant ADD_SIGNERS_TYPEHASH =
-        keccak256("AddSigners(address[] newSigners,uint256 newQuorum,uint256 nonce,uint256 deadline)");
+        keccak256("AddSigners(address[] newSigners,uint256 newThreshold,uint256 nonce,uint256 deadline)");
     bytes32 constant REMOVE_SIGNERS_TYPEHASH =
-        keccak256("RemoveSigners(address[] signersToRemove,uint256 newQuorum,uint256 nonce,uint256 deadline)");
+        keccak256("RemoveSigners(address[] signersToRemove,uint256 newThreshold,uint256 nonce,uint256 deadline)");
     uint256 constant MAX_DEADLINE = type(uint256).max;
 
     function setUp() public {
@@ -80,12 +80,12 @@ contract ThresholdCustodyTest is Test {
     function _signAddSigners(
         uint256 pk,
         address[] memory newSigners,
-        uint256 newQuorum,
+        uint256 newThreshold,
         uint256 nonce,
         uint256 deadline
     ) internal view returns (bytes memory) {
         bytes32 structHash = keccak256(
-            abi.encode(ADD_SIGNERS_TYPEHASH, _hashAddressArray(newSigners), newQuorum, nonce, deadline)
+            abi.encode(ADD_SIGNERS_TYPEHASH, _hashAddressArray(newSigners), newThreshold, nonce, deadline)
         );
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
@@ -95,12 +95,12 @@ contract ThresholdCustodyTest is Test {
     function _signRemoveSigners(
         uint256 pk,
         address[] memory signersToRemove,
-        uint256 newQuorum,
+        uint256 newThreshold,
         uint256 nonce,
         uint256 deadline
     ) internal view returns (bytes memory) {
         bytes32 structHash = keccak256(
-            abi.encode(REMOVE_SIGNERS_TYPEHASH, _hashAddressArray(signersToRemove), newQuorum, nonce, deadline)
+            abi.encode(REMOVE_SIGNERS_TYPEHASH, _hashAddressArray(signersToRemove), newThreshold, nonce, deadline)
         );
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
