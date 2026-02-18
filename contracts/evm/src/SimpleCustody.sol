@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity 0.8.30;
 
-import {IWithdraw} from "./interfaces/IWithdraw.sol";
-import {IDeposit} from "./interfaces/IDeposit.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
+import {IWithdraw} from "./interfaces/IWithdraw.sol";
+import {IDeposit} from "./interfaces/IDeposit.sol";
 
 contract SimpleCustody is IWithdraw, IDeposit, AccessControl, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -22,7 +23,7 @@ contract SimpleCustody is IWithdraw, IDeposit, AccessControl, ReentrancyGuard {
         bool finalized;
     }
 
-    mapping(bytes32 => WithdrawalRequest) public withdrawals;
+    mapping(bytes32 id => WithdrawalRequest request) public withdrawals;
 
     constructor(address admin, address neodax, address nitewatch) {
         _grantRole(DEFAULT_ADMIN_ROLE, admin);

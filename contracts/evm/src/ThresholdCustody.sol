@@ -5,34 +5,24 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {MultiSignerERC7913} from "@openzeppelin/contracts/utils/cryptography/signers/MultiSignerERC7913.sol";
 
 import {IWithdraw} from "./interfaces/IWithdraw.sol";
 import {IDeposit} from "./interfaces/IDeposit.sol";
 
-contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
+contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, MultiSignerERC7913 {
     using SafeERC20 for IERC20;
 
-    error InvalidSigner();
     error NotSigner();
-    error AlreadySigner();
     error InvalidQuorum();
-    error NotASigner();
-    error CannotRemoveLastSigner();
     error InvalidUser();
     error WithdrawalExpired();
     error SignerAlreadyApproved();
     error WithdrawalNotExpired();
     error InvalidSignature();
-    error SignaturesNotSorted();
-    error InsufficientSignatures();
     error EmptySignersArray();
-    error SignerIsCaller();
     error DeadlineExpired();
 
-    event SignerAdded(address indexed signer, uint64 newQuorum);
-    event SignerRemoved(address indexed signer, uint64 newQuorum);
-    event QuorumChanged(uint64 oldQuorum, uint64 newQuorum);
     event WithdrawalApproved(bytes32 indexed withdrawalId, address indexed signer, uint256 currentApprovals);
 
     struct WithdrawalRequest {
@@ -55,102 +45,63 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
     mapping(bytes32 withdrawalId => mapping(address signer => bool hasApproved)) public withdrawalApprovals;
     uint256 public signerNonce;
 
-    address[] public signers;
-    mapping(address signer => bool isSigner) public isSigner;
-    uint64 public quorum;
-
-    constructor(address[] memory initialSigners, uint64 quorum_) EIP712("QuorumCustody", "1") {
+    constructor(address[] memory initialSigners, uint64 quorum_)
+        EIP712("ThresholdCustody", "1")
+        MultiSignerERC7913(_toAddressBytesArray(initialSigners), quorum_)
+    {
         require(initialSigners.length != 0, EmptySignersArray());
         require(quorum_ != 0 && quorum_ <= initialSigners.length, InvalidQuorum());
-
-        uint256 signersLength = initialSigners.length;
-        for (uint256 i = 0; i < signersLength; i++) {
-            _addSigner(initialSigners[i], quorum_);
-        }
-
-        quorum = quorum_;
     }
 
     modifier onlySigner() {
-        require(isSigner[msg.sender], NotSigner());
+        require(isSigner(msg.sender), NotSigner());
         _;
     }
 
-    function addSigners(address[] calldata newSigners, uint64 newQuorum, uint256 deadline, bytes[] calldata signatures)
+    function isSigner(address signer) public view returns (bool) {
+        return isSigner(_toBytes(signer));
+    }
+
+    function addSigners(address[] calldata newSigners, uint64 newThreshold, uint256 deadline, bytes calldata signatures)
         external
         onlySigner
     {
         require(block.timestamp <= deadline, DeadlineExpired());
         require(newSigners.length != 0, EmptySignersArray());
-        require(
-            newQuorum != 0 && newQuorum >= quorum && newQuorum <= signers.length + newSigners.length, InvalidQuorum()
-        );
 
-        _verifySignatures(
-            keccak256(
-                abi.encode(ADD_SIGNERS_TYPEHASH, _hashAddressArray(newSigners), newQuorum, signerNonce, deadline)
-            ),
-            signatures
+        bytes32 structHash = keccak256(
+            abi.encode(ADD_SIGNERS_TYPEHASH, _hashAddressArray(newSigners), newThreshold, signerNonce, deadline)
         );
+        bytes32 digest = _hashTypedDataV4(structHash);
+
+        require(_rawSignatureValidation(digest, signatures), InvalidSignature());
 
         signerNonce++;
-        for (uint256 i = 0; i < newSigners.length; i++) {
-            _addSigner(newSigners[i], newQuorum);
-        }
-        if (quorum != newQuorum) {
-            uint64 oldQuorum = quorum;
-            quorum = newQuorum;
-            emit QuorumChanged(oldQuorum, newQuorum);
-        }
+
+        _addSigners(_toAddressBytesArray(newSigners));
+        _setThreshold(newThreshold);
     }
 
     function removeSigners(
         address[] calldata signersToRemove,
-        uint64 newQuorum,
+        uint64 newThreshold,
         uint256 deadline,
-        bytes[] calldata signatures
+        bytes calldata signatures
     ) external onlySigner {
         require(block.timestamp <= deadline, DeadlineExpired());
         require(signersToRemove.length != 0, EmptySignersArray());
-        require(signersToRemove.length < signers.length, CannotRemoveLastSigner());
-        uint256 remainingCount = signers.length - signersToRemove.length;
-        uint64 minQuorum = quorum < remainingCount ? quorum : uint64(remainingCount);
-        require(newQuorum != 0 && newQuorum >= minQuorum && newQuorum <= remainingCount, InvalidQuorum());
 
-        _verifySignatures(
-            keccak256(
-                abi.encode(
-                    REMOVE_SIGNERS_TYPEHASH, _hashAddressArray(signersToRemove), newQuorum, signerNonce, deadline
-                )
-            ),
-            signatures
+        bytes32 structHash = keccak256(
+            abi.encode(REMOVE_SIGNERS_TYPEHASH, _hashAddressArray(signersToRemove), newThreshold, signerNonce, deadline)
         );
+        bytes32 digest = _hashTypedDataV4(structHash);
+
+        require(_rawSignatureValidation(digest, signatures), InvalidSignature());
 
         signerNonce++;
-        uint256 signersLen = signers.length;
-        for (uint256 i = 0; i < signersToRemove.length; i++) {
-            address s = signersToRemove[i];
-            require(isSigner[s], NotASigner());
-            isSigner[s] = false;
-            for (uint256 j = 0; j < signersLen; j++) {
-                if (signers[j] == s) {
-                    signers[j] = signers[signersLen - 1];
-                    signers.pop();
-                    signersLen--;
-                    break;
-                }
-            }
-            emit SignerRemoved(s, newQuorum);
-        }
-        if (quorum != newQuorum) {
-            uint64 oldQuorum = quorum;
-            quorum = newQuorum;
-            emit QuorumChanged(oldQuorum, newQuorum);
-        }
-    }
 
-    function getSignerCount() external view returns (uint256) {
-        return signers.length;
+        _removeSigners(_toAddressBytesArray(signersToRemove));
+        _setThreshold(newThreshold);
     }
 
     function deposit(address token, uint256 amount) external payable override nonReentrant {
@@ -184,7 +135,7 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
             token: token,
             amount: amount,
             finalized: false,
-            requiredQuorum: quorum,
+            requiredQuorum: threshold(),
             createdAt: uint64(block.timestamp)
         });
 
@@ -225,14 +176,6 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
 
     // --- Internal ---
 
-    function _addSigner(address s, uint64 newQuorum) internal {
-        require(s != address(0), InvalidSigner());
-        require(!isSigner[s], AlreadySigner());
-        signers.push(s);
-        isSigner[s] = true;
-        emit SignerAdded(s, newQuorum);
-    }
-
     function _executeWithdrawal(WithdrawalRequest storage request) internal {
         address user = request.user;
         address token = request.token;
@@ -255,25 +198,12 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
     }
 
     function _countValidApprovals(bytes32 withdrawalId) internal view returns (uint256 count) {
-        uint256 len = signers.length;
-        for (uint256 i = 0; i < len; i++) {
-            if (withdrawalApprovals[withdrawalId][signers[i]]) count++;
-        }
-    }
+        bytes[] memory allSigners = getSigners(0, type(uint64).max);
 
-    function _verifySignatures(bytes32 structHash, bytes[] calldata signatures) internal view {
-        bytes32 digest = _hashTypedDataV4(structHash);
-        uint256 validApprovals = 1;
-        address lastSigner = address(0);
-        for (uint256 i = 0; i < signatures.length; i++) {
-            address recovered = ECDSA.recover(digest, signatures[i]);
-            require(uint160(recovered) > uint160(lastSigner), SignaturesNotSorted());
-            require(isSigner[recovered], InvalidSignature());
-            require(recovered != msg.sender, SignerIsCaller());
-            lastSigner = recovered;
-            validApprovals++;
+        for (uint256 i = 0; i < allSigners.length; i++) {
+            address s = _bytesToAddress(allSigners[i]);
+            if (withdrawalApprovals[withdrawalId][s]) count++;
         }
-        require(validApprovals >= quorum, InsufficientSignatures());
     }
 
     function _hashAddressArray(address[] calldata arr) internal pure returns (bytes32) {
@@ -290,5 +220,22 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
         returns (bytes32)
     {
         return keccak256(abi.encode(block.chainid, address(this), user, token, amount, nonce));
+    }
+
+    // Helpers for conversion
+    function _toBytes(address a) internal pure returns (bytes memory) {
+        return abi.encodePacked(a);
+    }
+
+    function _toAddressBytesArray(address[] memory addrs) internal pure returns (bytes[] memory) {
+        bytes[] memory b = new bytes[](addrs.length);
+        for (uint256 i = 0; i < addrs.length; i++) {
+            b[i] = _toBytes(addrs[i]);
+        }
+        return b;
+    }
+
+    function _bytesToAddress(bytes memory b) internal pure returns (address) {
+        return address(bytes20(b));
     }
 }

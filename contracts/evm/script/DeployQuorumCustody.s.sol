@@ -9,7 +9,7 @@ contract DeployQuorumCustody is Script {
 
     function run() public {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
-        uint256 initialQuorum = vm.envUint("INITIAL_QUORUM");
+        uint64 initialQuorum = uint64(vm.envUint("INITIAL_QUORUM"));
 
         address[] memory initialSigners = vm.envAddress("SIGNERS", ",");
 

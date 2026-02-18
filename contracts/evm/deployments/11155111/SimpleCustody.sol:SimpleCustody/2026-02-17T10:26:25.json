@@ -1,0 +1,15 @@
+{
+  "deployer": "0xF8bedb0aBa14833e95F29e760487C3d34Bc4Ec64",
+  "deployedTo": "0x61b9E0767f2ECA7e33802E82f9c64b1eBE72bA31",
+  "transactionHash": "0xb52a05b4755475340986a90a656c3ac8158ee56b158904f68c819d5d50227388",
+  "commit": "520c200f5b33d24c837e56e94120bbd8e82f673e",
+  "timestamp": 1771323985,
+  "chainId": 11155111,
+  "contractPath": "./src/SimpleCustody.sol:SimpleCustody",
+  "constructorArgs": [
+    "0xF8bedb0aBa14833e95F29e760487C3d34Bc4Ec64",
+    "0x9Adb525012073B74DDd7f9C8c4D7a2d26c4ff44e",
+    "0x136dcF99f48978372250e23e8155C3f7D317ca89"
+  ],
+  "comment": "UAT 0.1"
+}
