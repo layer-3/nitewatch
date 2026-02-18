@@ -726,7 +726,7 @@ contract QuorumCustodyTest is Test {
         vm.prank(signer1);
         bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
 
-        (,,,,, uint256 requiredQuorum,) = custody.withdrawals(id);
+        (,,,,,uint64 requiredQuorum) = custody.withdrawals(id);
         assertEq(requiredQuorum, 1);
     }
 
@@ -743,7 +743,7 @@ contract QuorumCustodyTest is Test {
         vm.prank(signer1);
         custody.finalizeWithdraw(id);
 
-        (,,,, bool finalized,,) = custody.withdrawals(id);
+        (,,,bool finalized,,) = custody.withdrawals(id);
         assertTrue(finalized);
     }
 
@@ -765,12 +765,12 @@ contract QuorumCustodyTest is Test {
 
         vm.prank(signer1);
         custody.finalizeWithdraw(id);
-        (,,,, bool finalized,,) = custody.withdrawals(id);
+        (,,,bool finalized,,) = custody.withdrawals(id);
         assertFalse(finalized);
 
         vm.prank(signer2);
         custody.finalizeWithdraw(id);
-        (,,,, finalized,,) = custody.withdrawals(id);
+        (,,,finalized,,) = custody.withdrawals(id);
         assertTrue(finalized);
     }
 
@@ -789,17 +789,17 @@ contract QuorumCustodyTest is Test {
 
         vm.prank(signer1);
         custody.finalizeWithdraw(id);
-        (,,,, bool finalized,,) = custody.withdrawals(id);
+        (,,,bool finalized,,) = custody.withdrawals(id);
         assertFalse(finalized);
 
         vm.prank(signer2);
         custody.finalizeWithdraw(id);
-        (,,,, finalized,,) = custody.withdrawals(id);
+        (,,,finalized,,) = custody.withdrawals(id);
         assertFalse(finalized);
 
         vm.prank(signer3);
         custody.finalizeWithdraw(id);
-        (,,,, finalized,,) = custody.withdrawals(id);
+        (,,,finalized,,) = custody.withdrawals(id);
         assertTrue(finalized);
     }
 
@@ -834,7 +834,7 @@ contract QuorumCustodyTest is Test {
         vm.prank(signer1);
         custody.finalizeWithdraw(id);
 
-        (,,,, bool finalized,,) = custody.withdrawals(id);
+        (,,,bool finalized,,) = custody.withdrawals(id);
         assertTrue(finalized);
     }
 
@@ -911,7 +911,7 @@ contract QuorumCustodyTest is Test {
         vm.prank(signer1);
         custody.finalizeWithdraw(id);
 
-        (,,,, bool finalized,,) = custody.withdrawals(id);
+        (,,,bool finalized,,) = custody.withdrawals(id);
         assertTrue(finalized);
     }
 
@@ -954,9 +954,8 @@ contract QuorumCustodyTest is Test {
         vm.prank(signer1);
         custody.finalizeWithdraw(id);
 
-        (address storedUser, address storedToken, uint256 storedAmount, bool exists, bool finalized,,) =
+        (address storedUser, address storedToken, uint256 storedAmount, bool finalized,,) =
             custody.withdrawals(id);
-        assertTrue(exists);
         assertTrue(finalized);
         assertEq(storedUser, address(0));
         assertEq(storedToken, address(0));
@@ -1017,7 +1016,7 @@ contract QuorumCustodyTest is Test {
         vm.prank(signer1);
         custody.rejectWithdraw(id);
 
-        (,,,, bool finalized,,) = custody.withdrawals(id);
+        (,,,bool finalized,,) = custody.withdrawals(id);
         assertTrue(finalized);
     }
 
@@ -1126,7 +1125,7 @@ contract QuorumCustodyTest is Test {
         vm.prank(signer1);
         custody.rejectWithdraw(id);
 
-        (,,,, bool finalized,,) = custody.withdrawals(id);
+        (,,,bool finalized,,) = custody.withdrawals(id);
         assertTrue(finalized);
     }
 
@@ -1208,14 +1207,14 @@ contract QuorumCustodyTest is Test {
         vm.prank(signer1);
         custody.finalizeWithdraw(id);
 
-        (,,,, bool finalized,,) = custody.withdrawals(id);
+        (,,,bool finalized,,) = custody.withdrawals(id);
         assertFalse(finalized);
 
         // signer3 approves — now 2 valid approvals (signer1 + signer3), meets requiredQuorum=2
         vm.prank(signer3);
         custody.finalizeWithdraw(id);
 
-        (,,,, finalized,,) = custody.withdrawals(id);
+        (,,,finalized,,) = custody.withdrawals(id);
         assertTrue(finalized);
     }
 

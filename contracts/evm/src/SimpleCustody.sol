@@ -23,7 +23,7 @@ contract SimpleCustody is IWithdraw, IDeposit, AccessControl, ReentrancyGuard {
         bool finalized;
     }
 
-    mapping(bytes32 => WithdrawalRequest) public withdrawals;
+    mapping(bytes32 id => WithdrawalRequest request) public withdrawals;
 
     constructor(address admin, address neodax, address nitewatch) {
         _grantRole(DEFAULT_ADMIN_ROLE, admin);

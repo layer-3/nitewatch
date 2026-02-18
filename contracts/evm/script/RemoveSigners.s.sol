@@ -23,7 +23,7 @@ contract RemoveSigners is Script {
         uint256 callerKey = vm.envUint("PRIVATE_KEY");
         address contractAddr = vm.envAddress("CONTRACT");
         address[] memory signersToRemove = vm.envAddress("SIGNERS_TO_REMOVE", ",");
-        uint256 newQuorum = vm.envUint("NEW_QUORUM");
+        uint64 newQuorum = uint64(vm.envUint("NEW_QUORUM"));
         uint256 deadline = vm.envUint("DEADLINE");
 
         bytes[] memory sigs;

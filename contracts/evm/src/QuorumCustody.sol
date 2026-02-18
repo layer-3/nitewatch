@@ -30,6 +30,20 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
     error SignerIsCaller();
     error DeadlineExpired();
 
+    event SignerAdded(address indexed signer, uint64 newQuorum);
+    event SignerRemoved(address indexed signer, uint64 newQuorum);
+    event QuorumChanged(uint64 oldQuorum, uint64 newQuorum);
+    event WithdrawalApproved(bytes32 indexed withdrawalId, address indexed signer, uint256 currentApprovals);
+
+    struct WithdrawalRequest {
+        address user;
+        address token;
+        uint256 amount;
+        bool finalized;
+        uint64 createdAt;
+        uint64 requiredQuorum;
+    }
+
     bytes32 public constant ADD_SIGNERS_TYPEHASH =
         keccak256("AddSigners(address[] newSigners,uint256 newQuorum,uint256 nonce,uint256 deadline)");
     bytes32 public constant REMOVE_SIGNERS_TYPEHASH =
@@ -37,52 +51,41 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
 
     uint256 public constant OPERATION_EXPIRY = 1 hours;
 
-    struct WithdrawalRequest {
-        address user;
-        address token;
-        uint256 amount;
-        bool exists;
-        bool finalized;
-        uint256 requiredQuorum;
-        uint256 createdAt;
-    }
-
-    mapping(bytes32 => WithdrawalRequest) public withdrawals;
-    mapping(bytes32 => mapping(address => bool)) public withdrawalApprovals;
+    mapping(bytes32 withdrawalId => WithdrawalRequest request) public withdrawals;
+    mapping(bytes32 withdrawalId => mapping(address signer => bool hasApproved)) public withdrawalApprovals;
     uint256 public signerNonce;
 
     address[] public signers;
-    mapping(address => bool) public isSigner;
-    uint256 public quorum;
+    mapping(address signer => bool isSigner) public isSigner;
+    uint64 public quorum;
 
-    event SignerAdded(address indexed signer, uint256 newQuorum);
-    event SignerRemoved(address indexed signer, uint256 newQuorum);
-    event QuorumChanged(uint256 oldQuorum, uint256 newQuorum);
-    event WithdrawalApproved(bytes32 indexed withdrawalId, address indexed signer, uint256 currentApprovals);
+    constructor(address[] memory initialSigners, uint64 quorum_) EIP712("QuorumCustody", "1") {
+        require(initialSigners.length != 0, EmptySignersArray());
+        require(quorum_ != 0 && quorum_ <= initialSigners.length, InvalidQuorum());
 
-    constructor(address[] memory initialSigners, uint256 _quorum) EIP712("QuorumCustody", "1") {
-        if (initialSigners.length == 0) revert EmptySignersArray();
-        if (_quorum == 0 || _quorum > initialSigners.length) revert InvalidQuorum();
-        for (uint256 i = 0; i < initialSigners.length; i++) {
-            _addSigner(initialSigners[i], _quorum);
+        uint256 signersLength = initialSigners.length;
+        for (uint256 i = 0; i < signersLength; i++) {
+            _addSigner(initialSigners[i], quorum_);
         }
-        quorum = _quorum;
+
+        quorum = quorum_;
     }
 
     modifier onlySigner() {
-        if (!isSigner[msg.sender]) revert NotSigner();
+        require(isSigner[msg.sender], NotSigner());
         _;
     }
 
-    function addSigners(address[] calldata newSigners, uint256 newQuorum, uint256 deadline, bytes[] calldata signatures)
+    function addSigners(address[] calldata newSigners, uint64 newQuorum, uint256 deadline, bytes[] calldata signatures)
         external
         onlySigner
     {
-        if (block.timestamp > deadline) revert DeadlineExpired();
-        if (newSigners.length == 0) revert EmptySignersArray();
-        if (newQuorum == 0 || newQuorum < quorum || newQuorum > signers.length + newSigners.length) {
-            revert InvalidQuorum();
-        }
+        require(block.timestamp <= deadline, DeadlineExpired());
+        require(newSigners.length != 0, EmptySignersArray());
+        require(
+            newQuorum != 0 && newQuorum >= quorum && newQuorum <= signers.length + newSigners.length,
+            InvalidQuorum()
+        );
 
         _verifySignatures(
             keccak256(
@@ -92,26 +95,28 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
         );
 
         signerNonce++;
-        uint256 oldQuorum = quorum;
-        quorum = newQuorum;
         for (uint256 i = 0; i < newSigners.length; i++) {
             _addSigner(newSigners[i], newQuorum);
         }
-        if (newQuorum != oldQuorum) emit QuorumChanged(oldQuorum, newQuorum);
+        if (quorum != newQuorum) {
+            uint64 oldQuorum = quorum;
+            quorum = newQuorum;
+            emit QuorumChanged(oldQuorum, newQuorum);
+        }
     }
 
     function removeSigners(
         address[] calldata signersToRemove,
-        uint256 newQuorum,
+        uint64 newQuorum,
         uint256 deadline,
         bytes[] calldata signatures
     ) external onlySigner {
-        if (block.timestamp > deadline) revert DeadlineExpired();
-        if (signersToRemove.length == 0) revert EmptySignersArray();
-        if (signersToRemove.length >= signers.length) revert CannotRemoveLastSigner();
+        require(block.timestamp <= deadline, DeadlineExpired());
+        require(signersToRemove.length != 0, EmptySignersArray());
+        require(signersToRemove.length < signers.length, CannotRemoveLastSigner());
         uint256 remainingCount = signers.length - signersToRemove.length;
-        uint256 minQuorum = quorum < remainingCount ? quorum : remainingCount;
-        if (newQuorum == 0 || newQuorum < minQuorum || newQuorum > remainingCount) revert InvalidQuorum();
+        uint64 minQuorum = quorum < remainingCount ? quorum : uint64(remainingCount);
+        require(newQuorum != 0 && newQuorum >= minQuorum && newQuorum <= remainingCount, InvalidQuorum());
 
         _verifySignatures(
             keccak256(
@@ -123,23 +128,26 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
         );
 
         signerNonce++;
-        uint256 oldQuorum = quorum;
-        quorum = newQuorum;
+        uint256 signersLen = signers.length;
         for (uint256 i = 0; i < signersToRemove.length; i++) {
             address s = signersToRemove[i];
-            if (!isSigner[s]) revert NotASigner();
+            require(isSigner[s], NotASigner());
             isSigner[s] = false;
-            uint256 len = signers.length;
-            for (uint256 j = 0; j < len; j++) {
+            for (uint256 j = 0; j < signersLen; j++) {
                 if (signers[j] == s) {
-                    signers[j] = signers[len - 1];
+                    signers[j] = signers[signersLen - 1];
                     signers.pop();
+                    signersLen--;
                     break;
                 }
             }
             emit SignerRemoved(s, newQuorum);
         }
-        if (newQuorum != oldQuorum) emit QuorumChanged(oldQuorum, newQuorum);
+        if (quorum != newQuorum) {
+            uint64 oldQuorum = quorum;
+            quorum = newQuorum;
+            emit QuorumChanged(oldQuorum, newQuorum);
+        }
     }
 
     function getSignerCount() external view returns (uint256) {
@@ -147,17 +155,16 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
     }
 
     function deposit(address token, uint256 amount) external payable override nonReentrant {
-        if (amount == 0) revert ZeroAmount();
-        uint256 received = amount;
+        require(amount != 0, ZeroAmount());
+
         if (token == address(0)) {
-            if (msg.value != amount) revert MsgValueMismatch();
+            require(msg.value == amount, MsgValueMismatch());
         } else {
-            if (msg.value != 0) revert NonZeroMsgValueForERC20();
-            uint256 balanceBefore = IERC20(token).balanceOf(address(this));
+            require(msg.value == 0, NonZeroMsgValueForERC20());
             IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-            received = IERC20(token).balanceOf(address(this)) - balanceBefore;
         }
-        emit Deposited(msg.sender, token, received);
+
+        emit Deposited(msg.sender, token, amount);
     }
 
     function startWithdraw(address user, address token, uint256 amount, uint256 nonce)
@@ -165,46 +172,53 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
         override
         onlySigner
         nonReentrant
-        returns (bytes32 withdrawalId)
+        returns (bytes32)
     {
-        if (user == address(0)) revert InvalidUser();
-        if (amount == 0) revert ZeroAmount();
-        withdrawalId = keccak256(abi.encode(block.chainid, address(this), user, token, amount, nonce));
-        if (withdrawals[withdrawalId].exists) revert WithdrawalAlreadyExists();
+        require(user != address(0), InvalidUser());
+        require(amount != 0, ZeroAmount());
+
+        bytes32 withdrawalId = _getWithdrawalId(user, token, amount, nonce);
+        require(withdrawals[withdrawalId].createdAt == 0, WithdrawalAlreadyExists());
 
         withdrawals[withdrawalId] = WithdrawalRequest({
             user: user,
             token: token,
             amount: amount,
-            exists: true,
             finalized: false,
             requiredQuorum: quorum,
-            createdAt: block.timestamp
+            createdAt: uint64(block.timestamp)
         });
+
         emit WithdrawStarted(withdrawalId, user, token, amount, nonce);
+        return withdrawalId;
     }
 
     function finalizeWithdraw(bytes32 withdrawalId) external override onlySigner nonReentrant {
         WithdrawalRequest storage request = withdrawals[withdrawalId];
-        if (!request.exists) revert WithdrawalNotFound();
-        if (request.finalized) revert WithdrawalAlreadyFinalized();
-        if (block.timestamp > request.createdAt + OPERATION_EXPIRY) revert WithdrawalExpired();
-        if (withdrawalApprovals[withdrawalId][msg.sender]) revert SignerAlreadyApproved();
+        address signer = msg.sender;
 
-        withdrawalApprovals[withdrawalId][msg.sender] = true;
+        require(request.createdAt != 0, WithdrawalNotFound());
+        require(!request.finalized, WithdrawalAlreadyFinalized());
+        require(block.timestamp <= request.createdAt + OPERATION_EXPIRY, WithdrawalExpired());
+        require(!withdrawalApprovals[withdrawalId][signer], SignerAlreadyApproved());
+
+        withdrawalApprovals[withdrawalId][signer] = true;
         uint256 validApprovals = _countValidApprovals(withdrawalId);
-        emit WithdrawalApproved(withdrawalId, msg.sender, validApprovals);
+
+        emit WithdrawalApproved(withdrawalId, signer, validApprovals);
 
         if (validApprovals >= request.requiredQuorum) {
-            _executeWithdrawal(withdrawalId, request);
+            _executeWithdrawal(request);
+            emit WithdrawFinalized(withdrawalId, true);
         }
     }
 
     function rejectWithdraw(bytes32 withdrawalId) external override onlySigner nonReentrant {
         WithdrawalRequest storage request = withdrawals[withdrawalId];
-        if (!request.exists) revert WithdrawalNotFound();
-        if (request.finalized) revert WithdrawalAlreadyFinalized();
-        if (block.timestamp <= request.createdAt + OPERATION_EXPIRY) revert WithdrawalNotExpired();
+
+        require(request.createdAt != 0, WithdrawalNotFound());
+        require(!request.finalized, WithdrawalAlreadyFinalized());
+        require(block.timestamp > request.createdAt + OPERATION_EXPIRY, WithdrawalNotExpired());
 
         request.finalized = true;
         emit WithdrawFinalized(withdrawalId, false);
@@ -212,32 +226,33 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
 
     // --- Internal ---
 
-    function _addSigner(address s, uint256 newQuorum) internal {
-        if (s == address(0)) revert InvalidSigner();
-        if (isSigner[s]) revert AlreadySigner();
+    function _addSigner(address s, uint64 newQuorum) internal {
+        require(s != address(0), InvalidSigner());
+        require(!isSigner[s], AlreadySigner());
         signers.push(s);
         isSigner[s] = true;
         emit SignerAdded(s, newQuorum);
     }
 
-    function _executeWithdrawal(bytes32 withdrawalId, WithdrawalRequest storage request) internal {
-        request.finalized = true;
+    function _executeWithdrawal(WithdrawalRequest storage request) internal {
         address user = request.user;
         address token = request.token;
         uint256 amount = request.amount;
+
+        request.finalized = true;
+
+        if (token == address(0)) {
+            require(address(this).balance >= amount, InsufficientLiquidity());
+            (bool success,) = user.call{value: amount}("");
+            require(success, ETHTransferFailed());
+        } else {
+            require(IERC20(token).balanceOf(address(this)) >= amount, InsufficientLiquidity());
+            IERC20(token).safeTransfer(user, amount);
+        }
+
         request.user = address(0);
         request.token = address(0);
         request.amount = 0;
-
-        if (token == address(0)) {
-            if (address(this).balance < amount) revert InsufficientLiquidity();
-            (bool success,) = user.call{value: amount}("");
-            if (!success) revert ETHTransferFailed();
-        } else {
-            if (IERC20(token).balanceOf(address(this)) < amount) revert InsufficientLiquidity();
-            IERC20(token).safeTransfer(user, amount);
-        }
-        emit WithdrawFinalized(withdrawalId, true);
     }
 
     function _countValidApprovals(bytes32 withdrawalId) internal view returns (uint256 count) {
@@ -253,13 +268,13 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
         address lastSigner = address(0);
         for (uint256 i = 0; i < signatures.length; i++) {
             address recovered = ECDSA.recover(digest, signatures[i]);
-            if (uint160(recovered) <= uint160(lastSigner)) revert SignaturesNotSorted();
-            if (!isSigner[recovered]) revert InvalidSignature();
-            if (recovered == msg.sender) revert SignerIsCaller();
+            require(uint160(recovered) > uint160(lastSigner), SignaturesNotSorted());
+            require(isSigner[recovered], InvalidSignature());
+            require(recovered != msg.sender, SignerIsCaller());
             lastSigner = recovered;
             validApprovals++;
         }
-        if (validApprovals < quorum) revert InsufficientSignatures();
+        require(validApprovals >= quorum, InsufficientSignatures());
     }
 
     function _hashAddressArray(address[] calldata arr) internal pure returns (bytes32) {
@@ -268,5 +283,9 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
             encoded[i] = bytes32(uint256(uint160(arr[i])));
         }
         return keccak256(abi.encodePacked(encoded));
+    }
+
+    function _getWithdrawalId(address user, address token, uint256 amount, uint256 nonce) internal view returns (bytes32) {
+        return keccak256(abi.encode(block.chainid, address(this), user, token, amount, nonce));
     }
 }
