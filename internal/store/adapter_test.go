@@ -6,11 +6,12 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	nw "github.com/layer-3/nitewatch"
+	"github.com/layer-3/nitewatch/custody"
 )
 
 func newTestAdapter(t *testing.T) *Adapter {
@@ -18,13 +19,9 @@ func newTestAdapter(t *testing.T) *Adapter {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
 		Logger: logger.Discard,
 	})
-	if err != nil {
-		t.Fatalf("failed to open in-memory db: %v", err)
-	}
+	require.NoError(t, err)
 	adapter, err := NewAdapter(db)
-	if err != nil {
-		t.Fatalf("failed to create adapter: %v", err)
-	}
+	require.NoError(t, err)
 	return adapter
 }
 
@@ -37,7 +34,7 @@ var (
 func TestSave(t *testing.T) {
 	a := newTestAdapter(t)
 
-	w := &nw.Withdrawal{
+	w := &custody.Withdrawal{
 		WithdrawalID: [32]byte{1},
 		User:         user,
 		Token:        tokenA,
@@ -47,24 +44,17 @@ func TestSave(t *testing.T) {
 		Timestamp:    time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC),
 	}
 
-	if err := a.Save(w); err != nil {
-		t.Fatalf("Save failed: %v", err)
-	}
+	require.NoError(t, a.Save(w))
 
-	// Verify it was persisted
 	total, err := a.GetTotalWithdrawn(tokenA, time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
-	if err != nil {
-		t.Fatalf("GetTotalWithdrawn failed: %v", err)
-	}
-	if total.Cmp(big.NewInt(1000)) != 0 {
-		t.Fatalf("expected total 1000, got %s", total)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "1000", total.String())
 }
 
 func TestSave_DuplicateWithdrawalID(t *testing.T) {
 	a := newTestAdapter(t)
 
-	w := &nw.Withdrawal{
+	w := &custody.Withdrawal{
 		WithdrawalID: [32]byte{1},
 		User:         user,
 		Token:        tokenA,
@@ -72,24 +62,16 @@ func TestSave_DuplicateWithdrawalID(t *testing.T) {
 		Timestamp:    time.Now(),
 	}
 
-	if err := a.Save(w); err != nil {
-		t.Fatalf("first Save failed: %v", err)
-	}
-	if err := a.Save(w); err == nil {
-		t.Fatal("expected error on duplicate withdrawal ID")
-	}
+	require.NoError(t, a.Save(w))
+	require.Error(t, a.Save(w))
 }
 
 func TestGetTotalWithdrawn_Empty(t *testing.T) {
 	a := newTestAdapter(t)
 
 	total, err := a.GetTotalWithdrawn(tokenA, time.Time{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if total.Sign() != 0 {
-		t.Fatalf("expected zero, got %s", total)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 0, total.Sign())
 }
 
 func TestGetTotalWithdrawn_TimeFilter(t *testing.T) {
@@ -97,46 +79,26 @@ func TestGetTotalWithdrawn_TimeFilter(t *testing.T) {
 
 	base := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
-	withdrawals := []*nw.Withdrawal{
+	withdrawals := []*custody.Withdrawal{
 		{WithdrawalID: [32]byte{1}, User: user, Token: tokenA, Amount: big.NewInt(100), Timestamp: base.Add(-2 * time.Hour)},
 		{WithdrawalID: [32]byte{2}, User: user, Token: tokenA, Amount: big.NewInt(200), Timestamp: base.Add(-30 * time.Minute)},
 		{WithdrawalID: [32]byte{3}, User: user, Token: tokenA, Amount: big.NewInt(300), Timestamp: base.Add(10 * time.Minute)},
 	}
 	for _, w := range withdrawals {
-		if err := a.Save(w); err != nil {
-			t.Fatalf("Save failed: %v", err)
-		}
+		require.NoError(t, a.Save(w))
 	}
 
-	// Since base: should include w2 (at base-30m? No, base-30m < base) and w3
-	// Actually base-30m is before base, so only w3 is >= base
-	// Let me check: since = base = 12:00
-	// w1 = 10:00 (before), w2 = 11:30 (before), w3 = 12:10 (after)
 	total, err := a.GetTotalWithdrawn(tokenA, base)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if total.Cmp(big.NewInt(300)) != 0 {
-		t.Fatalf("expected 300, got %s", total)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "300", total.String())
 
-	// Since 11:00: should include w2 and w3
 	total, err = a.GetTotalWithdrawn(tokenA, base.Add(-1*time.Hour))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if total.Cmp(big.NewInt(500)) != 0 {
-		t.Fatalf("expected 500, got %s", total)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "500", total.String())
 
-	// Since beginning: all three
 	total, err = a.GetTotalWithdrawn(tokenA, base.Add(-3*time.Hour))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if total.Cmp(big.NewInt(600)) != 0 {
-		t.Fatalf("expected 600, got %s", total)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "600", total.String())
 }
 
 func TestGetTotalWithdrawn_TokenFilter(t *testing.T) {
@@ -144,57 +106,77 @@ func TestGetTotalWithdrawn_TokenFilter(t *testing.T) {
 
 	base := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
-	withdrawals := []*nw.Withdrawal{
+	withdrawals := []*custody.Withdrawal{
 		{WithdrawalID: [32]byte{1}, User: user, Token: tokenA, Amount: big.NewInt(100), Timestamp: base},
 		{WithdrawalID: [32]byte{2}, User: user, Token: tokenB, Amount: big.NewInt(200), Timestamp: base},
 		{WithdrawalID: [32]byte{3}, User: user, Token: tokenA, Amount: big.NewInt(300), Timestamp: base},
 	}
 	for _, w := range withdrawals {
-		if err := a.Save(w); err != nil {
-			t.Fatalf("Save failed: %v", err)
-		}
+		require.NoError(t, a.Save(w))
 	}
 
 	totalA, err := a.GetTotalWithdrawn(tokenA, base.Add(-time.Hour))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if totalA.Cmp(big.NewInt(400)) != 0 {
-		t.Fatalf("expected 400 for tokenA, got %s", totalA)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "400", totalA.String())
 
 	totalB, err := a.GetTotalWithdrawn(tokenB, base.Add(-time.Hour))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	require.NoError(t, err)
+	require.Equal(t, "200", totalB.String())
+}
+
+func TestGetTotalWithdrawnByUser(t *testing.T) {
+	a := newTestAdapter(t)
+	base := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	userB := common.HexToAddress("0x2222222222222222222222222222222222222222")
+
+	withdrawals := []*custody.Withdrawal{
+		{WithdrawalID: [32]byte{1}, User: user, Token: tokenA, Amount: big.NewInt(100), Timestamp: base},
+		{WithdrawalID: [32]byte{2}, User: user, Token: tokenA, Amount: big.NewInt(200), Timestamp: base},
+		{WithdrawalID: [32]byte{3}, User: userB, Token: tokenA, Amount: big.NewInt(300), Timestamp: base},
+		{WithdrawalID: [32]byte{4}, User: user, Token: tokenB, Amount: big.NewInt(400), Timestamp: base},
 	}
-	if totalB.Cmp(big.NewInt(200)) != 0 {
-		t.Fatalf("expected 200 for tokenB, got %s", totalB)
+	for _, w := range withdrawals {
+		require.NoError(t, a.Save(w))
 	}
+
+	// user + tokenA = 100 + 200 = 300
+	total, err := a.GetTotalWithdrawnByUser(user, tokenA, base.Add(-time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, "300", total.String())
+
+	// userB + tokenA = 300
+	total, err = a.GetTotalWithdrawnByUser(userB, tokenA, base.Add(-time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, "300", total.String())
+
+	// user + tokenB = 400
+	total, err = a.GetTotalWithdrawnByUser(user, tokenB, base.Add(-time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, "400", total.String())
+
+	// userB + tokenB = 0 (no withdrawals)
+	total, err = a.GetTotalWithdrawnByUser(userB, tokenB, base.Add(-time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, 0, total.Sign())
 }
 
 func TestGetTotalWithdrawn_LargeAmounts(t *testing.T) {
 	a := newTestAdapter(t)
 	base := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
-	// Use amounts larger than uint64
 	bigAmount, _ := new(big.Int).SetString("999999999999999999999999999999", 10)
 
-	w := &nw.Withdrawal{
+	w := &custody.Withdrawal{
 		WithdrawalID: [32]byte{1},
 		User:         user,
 		Token:        tokenA,
 		Amount:       bigAmount,
 		Timestamp:    base,
 	}
-	if err := a.Save(w); err != nil {
-		t.Fatalf("Save failed: %v", err)
-	}
+	require.NoError(t, a.Save(w))
 
 	total, err := a.GetTotalWithdrawn(tokenA, base.Add(-time.Hour))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if total.Cmp(bigAmount) != 0 {
-		t.Fatalf("expected %s, got %s", bigAmount, total)
-	}
+	require.NoError(t, err)
+	require.Equal(t, bigAmount.String(), total.String())
 }

@@ -1,5 +1,0 @@
-limits:
-  # Example Token Address (Replace with actual deployment address)
-  "0x5FbDB2315678afecb367f032d93F642f64180aa3":
-    hourly: "1000000000000000000" # 1 ETH
-    daily: "10000000000000000000" # 10 ETH
