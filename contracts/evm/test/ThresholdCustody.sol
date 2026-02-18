@@ -169,10 +169,11 @@ contract ThresholdCustodyTest is Test {
     }
 
     // Helper to encode two signatures in MultiSignerERC7913 format (sorted by signer)
-    function _encodeMultiSig2(
-        address signerA, bytes memory sigA,
-        address signerB, bytes memory sigB
-    ) internal pure returns (bytes memory) {
+    function _encodeMultiSig2(address signerA, bytes memory sigA, address signerB, bytes memory sigB)
+        internal
+        pure
+        returns (bytes memory)
+    {
         bytes[] memory signers = new bytes[](2);
         bytes[] memory signatures = new bytes[](2);
 
@@ -500,15 +501,15 @@ contract ThresholdCustodyTest is Test {
         address[3] memory addrs = [signer1, signer2, signer3];
         bytes[3] memory sigs = [sig1, sig2, sig3];
         // Sort by address
-        for (uint i = 0; i < 2; i++) {
-            for (uint j = i + 1; j < 3; j++) {
+        for (uint256 i = 0; i < 2; i++) {
+            for (uint256 j = i + 1; j < 3; j++) {
                 if (uint160(addrs[i]) > uint160(addrs[j])) {
                     (addrs[i], addrs[j]) = (addrs[j], addrs[i]);
                     (sigs[i], sigs[j]) = (sigs[j], sigs[i]);
                 }
             }
         }
-        for (uint i = 0; i < 3; i++) {
+        for (uint256 i = 0; i < 3; i++) {
             signers[i] = abi.encodePacked(addrs[i]);
             signatures[i] = sigs[i];
         }
@@ -689,7 +690,7 @@ contract ThresholdCustodyTest is Test {
         vm.prank(signer1);
         bytes32 id = custody.startWithdraw(user, address(0), 1 ether, 1);
 
-        (,,,,,uint64 requiredQuorum) = custody.withdrawals(id);
+        (,,,,, uint64 requiredQuorum) = custody.withdrawals(id);
         assertEq(requiredQuorum, 1);
     }
 
@@ -706,7 +707,7 @@ contract ThresholdCustodyTest is Test {
         vm.prank(signer1);
         custody.finalizeWithdraw(id);
 
-        (,,,bool finalized,,) = custody.withdrawals(id);
+        (,,, bool finalized,,) = custody.withdrawals(id);
         assertTrue(finalized);
     }
 
@@ -729,12 +730,12 @@ contract ThresholdCustodyTest is Test {
 
         vm.prank(signer1);
         custody.finalizeWithdraw(id);
-        (,,,bool finalized,,) = custody.withdrawals(id);
+        (,,, bool finalized,,) = custody.withdrawals(id);
         assertFalse(finalized);
 
         vm.prank(signer2);
         custody.finalizeWithdraw(id);
-        (,,,finalized,,) = custody.withdrawals(id);
+        (,,, finalized,,) = custody.withdrawals(id);
         assertTrue(finalized);
     }
 
@@ -753,17 +754,17 @@ contract ThresholdCustodyTest is Test {
 
         vm.prank(signer1);
         custody.finalizeWithdraw(id);
-        (,,,bool finalized,,) = custody.withdrawals(id);
+        (,,, bool finalized,,) = custody.withdrawals(id);
         assertFalse(finalized);
 
         vm.prank(signer2);
         custody.finalizeWithdraw(id);
-        (,,,finalized,,) = custody.withdrawals(id);
+        (,,, finalized,,) = custody.withdrawals(id);
         assertFalse(finalized);
 
         vm.prank(signer3);
         custody.finalizeWithdraw(id);
-        (,,,finalized,,) = custody.withdrawals(id);
+        (,,, finalized,,) = custody.withdrawals(id);
         assertTrue(finalized);
     }
 
@@ -798,7 +799,7 @@ contract ThresholdCustodyTest is Test {
         vm.prank(signer1);
         custody.finalizeWithdraw(id);
 
-        (,,,bool finalized,,) = custody.withdrawals(id);
+        (,,, bool finalized,,) = custody.withdrawals(id);
         assertTrue(finalized);
     }
 
@@ -876,7 +877,7 @@ contract ThresholdCustodyTest is Test {
         vm.prank(signer1);
         custody.finalizeWithdraw(id);
 
-        (,,,bool finalized,,) = custody.withdrawals(id);
+        (,,, bool finalized,,) = custody.withdrawals(id);
         assertTrue(finalized);
     }
 
@@ -919,8 +920,7 @@ contract ThresholdCustodyTest is Test {
         vm.prank(signer1);
         custody.finalizeWithdraw(id);
 
-        (address storedUser, address storedToken, uint256 storedAmount, bool finalized,,) =
-            custody.withdrawals(id);
+        (address storedUser, address storedToken, uint256 storedAmount, bool finalized,,) = custody.withdrawals(id);
         assertTrue(finalized);
         assertEq(storedUser, address(0));
         assertEq(storedToken, address(0));
@@ -982,7 +982,7 @@ contract ThresholdCustodyTest is Test {
         vm.prank(signer1);
         custody.rejectWithdraw(id);
 
-        (,,,bool finalized,,) = custody.withdrawals(id);
+        (,,, bool finalized,,) = custody.withdrawals(id);
         assertTrue(finalized);
     }
 
@@ -1092,7 +1092,7 @@ contract ThresholdCustodyTest is Test {
         vm.prank(signer1);
         custody.rejectWithdraw(id);
 
-        (,,,bool finalized,,) = custody.withdrawals(id);
+        (,,, bool finalized,,) = custody.withdrawals(id);
         assertTrue(finalized);
     }
 
@@ -1175,14 +1175,14 @@ contract ThresholdCustodyTest is Test {
         vm.prank(signer1);
         custody.finalizeWithdraw(id);
 
-        (,,,bool finalized,,) = custody.withdrawals(id);
+        (,,, bool finalized,,) = custody.withdrawals(id);
         assertFalse(finalized);
 
         // signer3 approves — now 2 valid approvals (signer1 + signer3), meets requiredQuorum=2
         vm.prank(signer3);
         custody.finalizeWithdraw(id);
 
-        (,,,finalized,,) = custody.withdrawals(id);
+        (,,, finalized,,) = custody.withdrawals(id);
         assertTrue(finalized);
     }
 

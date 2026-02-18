@@ -83,8 +83,7 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
         require(block.timestamp <= deadline, DeadlineExpired());
         require(newSigners.length != 0, EmptySignersArray());
         require(
-            newQuorum != 0 && newQuorum >= quorum && newQuorum <= signers.length + newSigners.length,
-            InvalidQuorum()
+            newQuorum != 0 && newQuorum >= quorum && newQuorum <= signers.length + newSigners.length, InvalidQuorum()
         );
 
         _verifySignatures(
@@ -285,7 +284,11 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
         return keccak256(abi.encodePacked(encoded));
     }
 
-    function _getWithdrawalId(address user, address token, uint256 amount, uint256 nonce) internal view returns (bytes32) {
+    function _getWithdrawalId(address user, address token, uint256 amount, uint256 nonce)
+        internal
+        view
+        returns (bytes32)
+    {
         return keccak256(abi.encode(block.chainid, address(this), user, token, amount, nonce));
     }
 }

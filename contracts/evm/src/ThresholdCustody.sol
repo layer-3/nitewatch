@@ -51,7 +51,6 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
     {
         require(initialSigners.length != 0, EmptySignersArray());
         require(quorum_ != 0 && quorum_ <= initialSigners.length, InvalidQuorum());
-
     }
 
     modifier onlySigner() {
@@ -63,12 +62,10 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
         return isSigner(_toBytes(signer));
     }
 
-    function addSigners(
-        address[] calldata newSigners,
-        uint64 newThreshold,
-        uint256 deadline,
-        bytes calldata signatures
-    ) external onlySigner {
+    function addSigners(address[] calldata newSigners, uint64 newThreshold, uint256 deadline, bytes calldata signatures)
+        external
+        onlySigner
+    {
         require(block.timestamp <= deadline, DeadlineExpired());
         require(newSigners.length != 0, EmptySignersArray());
 
@@ -217,7 +214,11 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
         return keccak256(abi.encodePacked(encoded));
     }
 
-    function _getWithdrawalId(address user, address token, uint256 amount, uint256 nonce) internal view returns (bytes32) {
+    function _getWithdrawalId(address user, address token, uint256 amount, uint256 nonce)
+        internal
+        view
+        returns (bytes32)
+    {
         return keccak256(abi.encode(block.chainid, address(this), user, token, amount, nonce));
     }
 
@@ -228,7 +229,7 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
 
     function _toAddressBytesArray(address[] memory addrs) internal pure returns (bytes[] memory) {
         bytes[] memory b = new bytes[](addrs.length);
-        for(uint i=0; i<addrs.length; i++) {
+        for (uint256 i = 0; i < addrs.length; i++) {
             b[i] = _toBytes(addrs[i]);
         }
         return b;
