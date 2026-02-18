@@ -9,19 +9,23 @@ import {MultiSignerERC7913} from "@openzeppelin/contracts/utils/cryptography/sig
 
 import {IWithdraw} from "./interfaces/IWithdraw.sol";
 import {IDeposit} from "./interfaces/IDeposit.sol";
+import {Utils} from "./Utils.sol";
 
 contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, MultiSignerERC7913 {
     using SafeERC20 for IERC20;
+    using {Utils.hashArrayed, Utils.toAddressBytesArray} for address[];
+    using {Utils.toBytes} for address;
+    using {Utils.toAddress} for bytes;
 
-    error NotSigner();
-    error InvalidQuorum();
-    error InvalidUser();
-    error WithdrawalExpired();
-    error SignerAlreadyApproved();
-    error WithdrawalNotExpired();
-    error InvalidSignature();
+    // Contract-specific errors
     error EmptySignersArray();
     error DeadlineExpired();
+    error InvalidSignature();
+    error InvalidThreshold();
+    error NotSigner();
+    error InvalidUser();
+    error SignerAlreadyApproved();
+    error WithdrawalNotExpired();
 
     event WithdrawalApproved(bytes32 indexed withdrawalId, address indexed signer, uint256 currentApprovals);
 
@@ -31,13 +35,13 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
         uint256 amount;
         bool finalized;
         uint64 createdAt;
-        uint64 requiredQuorum;
+        uint64 requiredThreshold;
     }
 
     bytes32 public constant ADD_SIGNERS_TYPEHASH =
-        keccak256("AddSigners(address[] newSigners,uint256 newQuorum,uint256 nonce,uint256 deadline)");
+        keccak256("AddSigners(address[] newSigners,uint256 newThreshold,uint256 nonce,uint256 deadline)");
     bytes32 public constant REMOVE_SIGNERS_TYPEHASH =
-        keccak256("RemoveSigners(address[] signersToRemove,uint256 newQuorum,uint256 nonce,uint256 deadline)");
+        keccak256("RemoveSigners(address[] signersToRemove,uint256 newThreshold,uint256 nonce,uint256 deadline)");
 
     uint256 public constant OPERATION_EXPIRY = 1 hours;
 
@@ -45,12 +49,12 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
     mapping(bytes32 withdrawalId => mapping(address signer => bool hasApproved)) public withdrawalApprovals;
     uint256 public signerNonce;
 
-    constructor(address[] memory initialSigners, uint64 quorum_)
+    constructor(address[] memory initialSigners, uint64 threshold)
         EIP712("ThresholdCustody", "1")
-        MultiSignerERC7913(_toAddressBytesArray(initialSigners), quorum_)
+        MultiSignerERC7913(initialSigners.toAddressBytesArray(), threshold)
     {
         require(initialSigners.length != 0, EmptySignersArray());
-        require(quorum_ != 0 && quorum_ <= initialSigners.length, InvalidQuorum());
+        require(threshold != 0 && threshold <= initialSigners.length, InvalidThreshold());
     }
 
     modifier onlySigner() {
@@ -59,7 +63,7 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
     }
 
     function isSigner(address signer) public view returns (bool) {
-        return isSigner(_toBytes(signer));
+        return isSigner(signer.toBytes());
     }
 
     function addSigners(address[] calldata newSigners, uint64 newThreshold, uint256 deadline, bytes calldata signatures)
@@ -70,7 +74,7 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
         require(newSigners.length != 0, EmptySignersArray());
 
         bytes32 structHash = keccak256(
-            abi.encode(ADD_SIGNERS_TYPEHASH, _hashAddressArray(newSigners), newThreshold, signerNonce, deadline)
+            abi.encode(ADD_SIGNERS_TYPEHASH, newSigners.hashArrayed(), newThreshold, signerNonce, deadline)
         );
         bytes32 digest = _hashTypedDataV4(structHash);
 
@@ -78,7 +82,7 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
 
         signerNonce++;
 
-        _addSigners(_toAddressBytesArray(newSigners));
+        _addSigners(newSigners.toAddressBytesArray());
         _setThreshold(newThreshold);
     }
 
@@ -92,7 +96,7 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
         require(signersToRemove.length != 0, EmptySignersArray());
 
         bytes32 structHash = keccak256(
-            abi.encode(REMOVE_SIGNERS_TYPEHASH, _hashAddressArray(signersToRemove), newThreshold, signerNonce, deadline)
+            abi.encode(REMOVE_SIGNERS_TYPEHASH, signersToRemove.hashArrayed(), newThreshold, signerNonce, deadline)
         );
         bytes32 digest = _hashTypedDataV4(structHash);
 
@@ -100,17 +104,17 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
 
         signerNonce++;
 
-        _removeSigners(_toAddressBytesArray(signersToRemove));
+        _removeSigners(signersToRemove.toAddressBytesArray());
         _setThreshold(newThreshold);
     }
 
     function deposit(address token, uint256 amount) external payable override nonReentrant {
-        require(amount != 0, ZeroAmount());
+        require(amount != 0, IDeposit.ZeroAmount());
 
         if (token == address(0)) {
-            require(msg.value == amount, MsgValueMismatch());
+            require(msg.value == amount, IDeposit.InvalidMsgValue());
         } else {
-            require(msg.value == 0, NonZeroMsgValueForERC20());
+            require(msg.value == 0, IDeposit.InvalidMsgValue());
             IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         }
 
@@ -125,17 +129,17 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
         returns (bytes32)
     {
         require(user != address(0), InvalidUser());
-        require(amount != 0, ZeroAmount());
+        require(amount != 0, IDeposit.ZeroAmount());
 
-        bytes32 withdrawalId = _getWithdrawalId(user, token, amount, nonce);
-        require(withdrawals[withdrawalId].createdAt == 0, WithdrawalAlreadyExists());
+        bytes32 withdrawalId = Utils.getWithdrawalId(user, token, amount, nonce);
+        require(withdrawals[withdrawalId].createdAt == 0, IWithdraw.WithdrawalAlreadyExists());
 
         withdrawals[withdrawalId] = WithdrawalRequest({
             user: user,
             token: token,
             amount: amount,
             finalized: false,
-            requiredQuorum: threshold(),
+            requiredThreshold: threshold(),
             createdAt: uint64(block.timestamp)
         });
 
@@ -147,9 +151,9 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
         WithdrawalRequest storage request = withdrawals[withdrawalId];
         address signer = msg.sender;
 
-        require(request.createdAt != 0, WithdrawalNotFound());
-        require(!request.finalized, WithdrawalAlreadyFinalized());
-        require(block.timestamp <= request.createdAt + OPERATION_EXPIRY, WithdrawalExpired());
+        require(request.createdAt != 0, IWithdraw.WithdrawalNotFound());
+        require(!request.finalized, IWithdraw.WithdrawalAlreadyFinalized());
+        require(block.timestamp <= request.createdAt + OPERATION_EXPIRY, DeadlineExpired());
         require(!withdrawalApprovals[withdrawalId][signer], SignerAlreadyApproved());
 
         withdrawalApprovals[withdrawalId][signer] = true;
@@ -157,7 +161,7 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
 
         emit WithdrawalApproved(withdrawalId, signer, validApprovals);
 
-        if (validApprovals >= request.requiredQuorum) {
+        if (validApprovals >= request.requiredThreshold) {
             _executeWithdrawal(request);
             emit WithdrawFinalized(withdrawalId, true);
         }
@@ -166,8 +170,8 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
     function rejectWithdraw(bytes32 withdrawalId) external override onlySigner nonReentrant {
         WithdrawalRequest storage request = withdrawals[withdrawalId];
 
-        require(request.createdAt != 0, WithdrawalNotFound());
-        require(!request.finalized, WithdrawalAlreadyFinalized());
+        require(request.createdAt != 0, IWithdraw.WithdrawalNotFound());
+        require(!request.finalized, IWithdraw.WithdrawalAlreadyFinalized());
         require(block.timestamp > request.createdAt + OPERATION_EXPIRY, WithdrawalNotExpired());
 
         request.finalized = true;
@@ -184,11 +188,11 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
         request.finalized = true;
 
         if (token == address(0)) {
-            require(address(this).balance >= amount, InsufficientLiquidity());
+            require(address(this).balance >= amount, IWithdraw.InsufficientLiquidity());
             (bool success,) = user.call{value: amount}("");
-            require(success, ETHTransferFailed());
+            require(success, IWithdraw.ETHTransferFailed());
         } else {
-            require(IERC20(token).balanceOf(address(this)) >= amount, InsufficientLiquidity());
+            require(IERC20(token).balanceOf(address(this)) >= amount, IWithdraw.InsufficientLiquidity());
             IERC20(token).safeTransfer(user, amount);
         }
 
@@ -201,41 +205,8 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
         bytes[] memory allSigners = getSigners(0, type(uint64).max);
 
         for (uint256 i = 0; i < allSigners.length; i++) {
-            address s = _bytesToAddress(allSigners[i]);
+            address s = allSigners[i].toAddress();
             if (withdrawalApprovals[withdrawalId][s]) count++;
         }
-    }
-
-    function _hashAddressArray(address[] calldata arr) internal pure returns (bytes32) {
-        bytes32[] memory encoded = new bytes32[](arr.length);
-        for (uint256 i = 0; i < arr.length; i++) {
-            encoded[i] = bytes32(uint256(uint160(arr[i])));
-        }
-        return keccak256(abi.encodePacked(encoded));
-    }
-
-    function _getWithdrawalId(address user, address token, uint256 amount, uint256 nonce)
-        internal
-        view
-        returns (bytes32)
-    {
-        return keccak256(abi.encode(block.chainid, address(this), user, token, amount, nonce));
-    }
-
-    // Helpers for conversion
-    function _toBytes(address a) internal pure returns (bytes memory) {
-        return abi.encodePacked(a);
-    }
-
-    function _toAddressBytesArray(address[] memory addrs) internal pure returns (bytes[] memory) {
-        bytes[] memory b = new bytes[](addrs.length);
-        for (uint256 i = 0; i < addrs.length; i++) {
-            b[i] = _toBytes(addrs[i]);
-        }
-        return b;
-    }
-
-    function _bytesToAddress(bytes memory b) internal pure returns (address) {
-        return address(bytes20(b));
     }
 }

@@ -2,8 +2,6 @@
 pragma solidity ^0.8.30;
 
 interface IWithdraw {
-    // ---- errors ----
-    error ZeroAmount();
     error WithdrawalAlreadyExists();
     error WithdrawalNotFound();
     error WithdrawalAlreadyFinalized();

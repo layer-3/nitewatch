@@ -618,14 +618,14 @@ contract ThresholdCustodyTest is Test {
 
     function test_Fail_DepositZeroAmount() public {
         vm.prank(user);
-        vm.expectRevert(IWithdraw.ZeroAmount.selector);
+        vm.expectRevert(IDeposit.ZeroAmount.selector);
         custody.deposit(address(0), 0);
     }
 
     function test_Fail_DepositETH_MsgValueMismatch() public {
         vm.deal(user, 2 ether);
         vm.prank(user);
-        vm.expectRevert(IDeposit.MsgValueMismatch.selector);
+        vm.expectRevert(IDeposit.InvalidMsgValue.selector);
         custody.deposit{value: 0.5 ether}(address(0), 1 ether);
     }
 
@@ -634,7 +634,7 @@ contract ThresholdCustodyTest is Test {
         vm.deal(user, 1 ether);
         vm.startPrank(user);
         token.approve(address(custody), 100e18);
-        vm.expectRevert(IDeposit.NonZeroMsgValueForERC20.selector);
+        vm.expectRevert(IDeposit.InvalidMsgValue.selector);
         custody.deposit{value: 1 ether}(address(token), 100e18);
         vm.stopPrank();
     }
@@ -657,7 +657,7 @@ contract ThresholdCustodyTest is Test {
 
     function test_Fail_StartWithdraw_ZeroAmount() public {
         vm.prank(signer1);
-        vm.expectRevert(IWithdraw.ZeroAmount.selector);
+        vm.expectRevert(IDeposit.ZeroAmount.selector);
         custody.startWithdraw(user, address(0), 0, 1);
     }
 
@@ -863,7 +863,7 @@ contract ThresholdCustodyTest is Test {
         vm.warp(block.timestamp + 1 hours + 1);
 
         vm.prank(signer1);
-        vm.expectRevert(ThresholdCustody.WithdrawalExpired.selector);
+        vm.expectRevert(ThresholdCustody.DeadlineExpired.selector);
         custody.finalizeWithdraw(id);
     }
 
@@ -1085,7 +1085,7 @@ contract ThresholdCustodyTest is Test {
         vm.warp(block.timestamp + 1 hours + 1);
 
         vm.prank(signer2);
-        vm.expectRevert(ThresholdCustody.WithdrawalExpired.selector);
+        vm.expectRevert(ThresholdCustody.DeadlineExpired.selector);
         custody.finalizeWithdraw(id);
 
         // Clean up expired

@@ -32,12 +32,12 @@ contract SimpleCustody is IWithdraw, IDeposit, AccessControl, ReentrancyGuard {
     }
 
     function deposit(address token, uint256 amount) external payable override nonReentrant {
-        if (amount == 0) revert ZeroAmount();
+        if (amount == 0) revert IDeposit.ZeroAmount();
         uint256 received = amount;
         if (token == address(0)) {
-            if (msg.value != amount) revert MsgValueMismatch();
+            if (msg.value != amount) revert IDeposit.InvalidMsgValue();
         } else {
-            if (msg.value != 0) revert NonZeroMsgValueForERC20();
+            if (msg.value != 0) revert IDeposit.InvalidMsgValue();
             uint256 balanceBefore = IERC20(token).balanceOf(address(this));
             IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
             received = IERC20(token).balanceOf(address(this)) - balanceBefore;
@@ -52,10 +52,10 @@ contract SimpleCustody is IWithdraw, IDeposit, AccessControl, ReentrancyGuard {
         nonReentrant
         returns (bytes32 withdrawalId)
     {
-        if (amount == 0) revert ZeroAmount();
+        if (amount == 0) revert IDeposit.ZeroAmount();
         withdrawalId = keccak256(abi.encode(block.chainid, address(this), user, token, amount, nonce));
 
-        if (withdrawals[withdrawalId].exists) revert WithdrawalAlreadyExists();
+        if (withdrawals[withdrawalId].exists) revert IWithdraw.WithdrawalAlreadyExists();
 
         withdrawals[withdrawalId] =
             WithdrawalRequest({user: user, token: token, amount: amount, exists: true, finalized: false});
@@ -65,8 +65,8 @@ contract SimpleCustody is IWithdraw, IDeposit, AccessControl, ReentrancyGuard {
 
     function finalizeWithdraw(bytes32 withdrawalId) external override onlyRole(NITEWATCH_ROLE) nonReentrant {
         WithdrawalRequest storage request = withdrawals[withdrawalId];
-        if (!request.exists) revert WithdrawalNotFound();
-        if (request.finalized) revert WithdrawalAlreadyFinalized();
+        if (!request.exists) revert IWithdraw.WithdrawalNotFound();
+        if (request.finalized) revert IWithdraw.WithdrawalAlreadyFinalized();
 
         request.finalized = true;
         address user = request.user;
@@ -79,11 +79,11 @@ contract SimpleCustody is IWithdraw, IDeposit, AccessControl, ReentrancyGuard {
         request.amount = 0;
 
         if (token == address(0)) {
-            if (address(this).balance < amount) revert InsufficientLiquidity();
+            if (address(this).balance < amount) revert IWithdraw.InsufficientLiquidity();
             (bool success,) = user.call{value: amount}("");
-            if (!success) revert ETHTransferFailed();
+            if (!success) revert IWithdraw.ETHTransferFailed();
         } else {
-            if (IERC20(token).balanceOf(address(this)) < amount) revert InsufficientLiquidity();
+            if (IERC20(token).balanceOf(address(this)) < amount) revert IWithdraw.InsufficientLiquidity();
             IERC20(token).safeTransfer(user, amount);
         }
 
@@ -92,8 +92,8 @@ contract SimpleCustody is IWithdraw, IDeposit, AccessControl, ReentrancyGuard {
 
     function rejectWithdraw(bytes32 withdrawalId) external override onlyRole(NITEWATCH_ROLE) nonReentrant {
         WithdrawalRequest storage request = withdrawals[withdrawalId];
-        if (!request.exists) revert WithdrawalNotFound();
-        if (request.finalized) revert WithdrawalAlreadyFinalized();
+        if (!request.exists) revert IWithdraw.WithdrawalNotFound();
+        if (request.finalized) revert IWithdraw.WithdrawalAlreadyFinalized();
 
         request.finalized = true;
 
