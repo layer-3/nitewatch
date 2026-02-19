@@ -22,7 +22,3 @@ custody/simple_custody.go: contracts/evm/out/.build-sentinel
 	jq -r .bytecode.object contracts/evm/out/SimpleCustody.sol/SimpleCustody.json > custody/SimpleCustody.bin
 	abigen --abi custody/SimpleCustody.abi --bin custody/SimpleCustody.bin --pkg custody --type SimpleCustody --out $@
 
-custody/mock_erc20.go: contracts/evm/out/.build-sentinel
-	jq .abi contracts/evm/out/MockERC20.sol/MockERC20.json > custody/MockERC20.abi
-	jq -r .bytecode.object contracts/evm/out/MockERC20.sol/MockERC20.json > custody/MockERC20.bin
-	abigen --abi custody/MockERC20.abi --bin custody/MockERC20.bin --pkg custody --type MockERC20 --out $@
