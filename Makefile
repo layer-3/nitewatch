@@ -1,5 +1,5 @@
 SOL_SOURCES := $(shell find contracts/evm/src -name '*.sol')
-BINDINGS    := custody/iwithdraw.go custody/ideposit.go custody/simple_custody.go custody/mock_erc20.go
+BINDINGS    := custody/iwithdraw.go custody/ideposit.go custody/simple_custody.go
 
 .PHONY: generate
 generate: $(BINDINGS)

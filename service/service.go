@@ -146,8 +146,6 @@ func (svc *Service) RunWorkerWithContext(ctx context.Context) error {
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
 
-	attachWebHandlers(svc)
-
 	g, ctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {

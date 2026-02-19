@@ -1,6 +1,3 @@
-// Copied from github.com/layer-3/pathfinder/pkg/ethlistener (commit hash 686dc94b80985eba798fdec499b9a802dbf80471).
-// Adapted: replaced slog with ipfs/go-log, removed FetchHistoricalLogs,
-// which depends on pathfinder's ethclient package.
 package custody
 
 import (
