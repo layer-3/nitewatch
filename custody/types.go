@@ -74,3 +74,12 @@ type WithdrawalStore interface {
 	GetTotalWithdrawn(token common.Address, since time.Time) (*big.Int, error)
 	GetTotalWithdrawnByUser(user common.Address, token common.Address, since time.Time) (*big.Int, error)
 }
+
+// EthBackend is the Ethereum client interface required by the service.
+// Both *ethclient.Client and simulated.Client satisfy this interface.
+type EthBackend interface {
+	bind.ContractBackend
+	bind.DeployBackend
+	ChainID(ctx context.Context) (*big.Int, error)
+	Close()
+}

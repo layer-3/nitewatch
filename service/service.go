@@ -48,7 +48,7 @@ type Service struct {
 	Logger *slog.Logger
 
 	web       *httpServer
-	ethClient *ethclient.Client
+	ethClient custody.EthBackend
 	contract  *custody.IWithdraw
 	listener  *custody.Listener
 	auth      *bind.TransactOpts
@@ -58,7 +58,24 @@ type Service struct {
 	workerReady int32
 }
 
+// New creates a Service that dials an Ethereum node via the configured RPC URL.
 func New(conf config.Config) (*Service, error) {
+	client, err := ethclient.Dial(conf.Blockchain.RPCURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to Ethereum RPC: %w", err)
+	}
+
+	svc, err := NewWithBackend(conf, client)
+	if err != nil {
+		client.Close()
+		return nil, err
+	}
+	return svc, nil
+}
+
+// NewWithBackend creates a Service using a pre-existing Ethereum backend.
+// The caller is responsible for closing the backend when done.
+func NewWithBackend(conf config.Config, client custody.EthBackend) (*Service, error) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil)).With("service", "nitewatch")
 
 	srv := newHTTPServer(conf.ListenAddr)
@@ -85,33 +102,24 @@ func New(conf config.Config) (*Service, error) {
 
 	chk := checker.New(globalLimits, userOverrides, db)
 
-	client, err := ethclient.Dial(conf.Blockchain.RPCURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to Ethereum RPC: %w", err)
-	}
-
 	chainID, err := client.ChainID(context.Background())
 	if err != nil {
-		client.Close()
 		return nil, fmt.Errorf("failed to get chain ID: %w", err)
 	}
 
 	key, err := crypto.HexToECDSA(conf.Blockchain.PrivateKey)
 	if err != nil {
-		client.Close()
 		return nil, fmt.Errorf("failed to parse private key: %w", err)
 	}
 
 	auth, err := bind.NewKeyedTransactorWithChainID(key, chainID)
 	if err != nil {
-		client.Close()
 		return nil, fmt.Errorf("failed to create transactor: %w", err)
 	}
 
 	addr := common.HexToAddress(conf.Blockchain.ContractAddr)
 	withdrawContract, err := custody.NewIWithdraw(addr, client)
 	if err != nil {
-		client.Close()
 		return nil, fmt.Errorf("failed to bind IWithdraw contract: %w", err)
 	}
 
