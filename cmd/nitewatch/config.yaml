@@ -16,4 +16,4 @@ limits:
 #       daily:  "50000000000000000000"
 
 listen_addr: ":8080"
-db_path: "nitewatch.db"
+db_path: "${NITEWATCH_DB_PATH}"
