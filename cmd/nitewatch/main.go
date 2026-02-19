@@ -1,181 +1,39 @@
 package main
 
 import (
-	"context"
-	_ "embed"
-	"flag"
-	"log"
+	"fmt"
+	"log/slog"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethclient"
-	"gopkg.in/yaml.v3"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
-
-	nw "github.com/layer-3/nitewatch"
-	"github.com/layer-3/nitewatch/chain"
-	"github.com/layer-3/nitewatch/core"
-	"github.com/layer-3/nitewatch/store"
+	"github.com/layer-3/nitewatch/config"
+	"github.com/layer-3/nitewatch/service"
 )
 
-//go:embed limits.yaml
-var limitsConfig []byte
-
 func main() {
-	rpcURL := flag.String("rpc", "ws://127.0.0.1:8545", "Ethereum RPC URL (WebSocket required)")
-	contractAddr := flag.String("contract", "", "IWithdraw contract address")
-	privateKeyHex := flag.String("key", "", "Private key for finalizing withdrawals (hex)")
-	confirmations := flag.Uint64("confirmations", 12, "Number of block confirmations to wait")
-	dbPath := flag.String("db", "nitewatch.db", "Path to SQLite database")
-	flag.Parse()
-
-	if *contractAddr == "" || *privateKeyHex == "" {
-		log.Fatal("Contract address and private key are required")
+	if len(os.Args) < 2 || os.Args[1] != "worker" {
+		fmt.Fprintln(os.Stderr, "usage: nitewatch worker")
+		os.Exit(1)
 	}
 
-	// 1. Initialize Store
-	gormDB, err := gorm.Open(sqlite.Open(*dbPath), &gorm.Config{})
+	configPath := os.Getenv("NITEWATCH_CONFIG")
+	if configPath == "" {
+		configPath = "config.yaml"
+	}
+
+	conf, err := config.Load(configPath)
 	if err != nil {
-		log.Fatalf("Failed to open database: %v", err)
+		slog.Error("Failed to load configuration", "error", err)
+		os.Exit(1)
 	}
 
-	db, err := store.NewAdapter(gormDB)
+	svc, err := service.New(*conf)
 	if err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
+		slog.Error("Failed to create service", "error", err)
+		os.Exit(1)
 	}
 
-	// 2. Load Configuration and Initialize Checker
-	var cfg core.Config
-	if err := yaml.Unmarshal(limitsConfig, &cfg); err != nil {
-		log.Fatalf("Failed to parse embedded limits.yaml: %v", err)
-	}
-
-	checker, err := core.NewChecker(cfg, db)
-	if err != nil {
-		log.Fatalf("Failed to initialize checker: %v", err)
-	}
-
-	// 3. Connect to Ethereum
-	client, err := ethclient.Dial(*rpcURL)
-	if err != nil {
-		log.Fatalf("Failed to connect to RPC: %v", err)
-	}
-	defer client.Close()
-
-	chainID, err := client.ChainID(context.Background())
-	if err != nil {
-		log.Fatalf("Failed to get chain ID: %v", err)
-	}
-
-	// 4. Setup Signer
-	key, err := crypto.HexToECDSA(*privateKeyHex)
-	if err != nil {
-		log.Fatalf("Failed to parse private key: %v", err)
-	}
-
-	auth, err := bind.NewKeyedTransactorWithChainID(key, chainID)
-	if err != nil {
-		log.Fatalf("Failed to create transactor: %v", err)
-	}
-
-	// 5. Setup Contract Binding
-	addr := common.HexToAddress(*contractAddr)
-	custodyContract, err := chain.NewIWithdraw(addr, client)
-	if err != nil {
-		log.Fatalf("Failed to bind contract: %v", err)
-	}
-
-	// 6. Setup Listener
-	listener := chain.NewListener(client, custodyContract, *confirmations)
-
-	// 7. Start Watching
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	withdrawals := make(chan *nw.WithdrawStartedEvent)
-
-	// Handle shutdown
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		log.Println("Shutting down...")
-		cancel()
-	}()
-
-	go func() {
-		log.Println("Listening for WithdrawStarted events...")
-		if err := listener.WatchWithdrawStarted(ctx, withdrawals); err != nil {
-			if ctx.Err() == nil {
-				log.Printf("WatchWithdrawStarted error: %v", err)
-			}
-		}
-	}()
-
-	// 8. Process Loop
-	for event := range withdrawals {
-		log.Printf("New withdrawal request: ID=%x User=%s Token=%s Amount=%s",
-			event.WithdrawalID, event.User.Hex(), event.Token.Hex(), event.Amount)
-
-		// Check Limits
-		if err := checker.Check(event.Token, event.Amount); err != nil {
-			log.Printf("Withdrawal %x blocked by policy: %v. Rejecting on-chain...", event.WithdrawalID, err)
-			
-			txAuth := *auth
-			txAuth.Context = ctx
-			tx, err := custodyContract.RejectWithdraw(&txAuth, event.WithdrawalID)
-			if err != nil {
-				log.Printf("Failed to reject withdrawal %x: %v", event.WithdrawalID, err)
-			} else {
-				log.Printf("Sent reject tx: %s for withdrawal %x", tx.Hash().Hex(), event.WithdrawalID)
-				bind.WaitMined(ctx, client, tx)
-			}
-			continue
-		}
-
-		// Finalize
-		txAuth := *auth
-		txAuth.Context = ctx
-
-		tx, err := custodyContract.FinalizeWithdraw(&txAuth, event.WithdrawalID)
-		if err != nil {
-			log.Printf("Failed to finalize withdrawal %x: %v", event.WithdrawalID, err)
-			continue
-		}
-
-		log.Printf("Sent finalize tx: %s for withdrawal %x", tx.Hash().Hex(), event.WithdrawalID)
-
-		receipt, err := bind.WaitMined(ctx, client, tx)
-		if err != nil {
-			log.Printf("Transaction mining failed: %v", err)
-			continue
-		}
-
-		if receipt.Status == 1 {
-			log.Printf("Withdrawal %x finalized successfully on-chain.", event.WithdrawalID)
-
-			// Record usage in DB
-			record := &nw.Withdrawal{
-				WithdrawalID: event.WithdrawalID,
-				User:         event.User,
-				Token:        event.Token,
-				Amount:       event.Amount,
-				BlockNumber:  receipt.BlockNumber.Uint64(),
-				TxHash:       tx.Hash(),
-				Timestamp:    time.Now(),
-			}
-
-			if err := checker.Record(record); err != nil {
-				log.Printf("Failed to record withdrawal %x in DB: %v", event.WithdrawalID, err)
-			}
-		} else {
-			log.Printf("Withdrawal %x finalization tx failed (reverted).", event.WithdrawalID)
-		}
+	if err := svc.RunWorker(); err != nil {
+		slog.Error("Worker failed", "error", err)
+		os.Exit(1)
 	}
 }
