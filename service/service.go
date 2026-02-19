@@ -40,7 +40,7 @@ func newHTTPServer(addr string) *httpServer {
 	}
 }
 
-func (s *httpServer) Run() error       { return s.server.ListenAndServe() }
+func (s *httpServer) Run() error                         { return s.server.ListenAndServe() }
 func (s *httpServer) Shutdown(ctx context.Context) error { return s.server.Shutdown(ctx) }
 
 type Service struct {

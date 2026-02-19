@@ -15,10 +15,10 @@ const (
 )
 
 type healthResponse struct {
-	Status       healthStatus           `json:"status"`
-	Service      string                 `json:"service"`
-	Timestamp    string                 `json:"timestamp"`
-	Dependencies map[string]depCheck    `json:"dependencies,omitempty"`
+	Status       healthStatus        `json:"status"`
+	Service      string              `json:"service"`
+	Timestamp    string              `json:"timestamp"`
+	Dependencies map[string]depCheck `json:"dependencies,omitempty"`
 }
 
 type depCheck struct {

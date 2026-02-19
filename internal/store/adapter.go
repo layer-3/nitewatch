@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 	"time"
@@ -102,7 +103,7 @@ func (a *Adapter) GetCursor(streamName string) (blockNumber uint64, logIndex uin
 	var cursor BlockCursorModel
 	result := a.db.Where("stream_name = ?", streamName).First(&cursor)
 	if result.Error != nil {
-		if result.Error == gorm.ErrRecordNotFound {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return 0, 0, nil
 		}
 		return 0, 0, result.Error
