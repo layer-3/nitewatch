@@ -4,12 +4,14 @@ pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MultiSignerERC7913} from "@openzeppelin/contracts/utils/cryptography/signers/MultiSignerERC7913.sol";
 
 import {ThresholdCustody, SET_THRESHOLD_TYPEHASH, ADD_SIGNERS_TYPEHASH, REMOVE_SIGNERS_TYPEHASH, OPERATION_EXPIRY} from "../src/ThresholdCustody.sol";
 import {IWithdraw} from "../src/interfaces/IWithdraw.sol";
 import {IDeposit} from "../src/interfaces/IDeposit.sol";
 import {Utils} from "../src/Utils.sol";
+import {TestThresholdCustody} from "./TestThresholdCustody.sol";
 
 using {Utils.toBytes} for address;
 
@@ -77,16 +79,20 @@ contract ThresholdCustodyTest_Base is Test {
     // EIP-712 signing helpers
     // =========================================================================
 
-    function _domainSeparator() internal view returns (bytes32) {
+    function _domainSeparator(address contractAddress) internal view returns (bytes32) {
         return keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
                 keccak256("ThresholdCustody"),
                 keccak256("1"),
                 block.chainid,
-                address(custody)
+                address(contractAddress)
             )
         );
+    }
+
+    function _domainSeparator() internal view returns (bytes32) {
+        return _domainSeparator(address(custody));
     }
 
     function _signSetThreshold(
@@ -245,7 +251,7 @@ contract ThresholdCustodyTest_Base is Test {
         assertEq(custody.signerNonce(), newNonce);
     }
 
-    function _validateWithdrawalData(bytes32 id, address expectedUser, address expectedToken, uint256 expectedAmount, bool expectedFinalized, uint64 expectedThreshold, uint64 expectedCreatedAt) internal view {
+    function _validateWithdrawalData(bytes32 id, address expectedUser, address expectedToken, uint256 expectedAmount, bool expectedFinalized, uint64 expectedThreshold, uint64 expectedCreatedAt) internal view virtual {
         (address storedUser, address storedToken, uint256 storedAmount, bool storedFinalized, uint64 storedCreatedAt, uint64 storedThreshold) = custody.withdrawals(id);
         assertEq(storedUser, expectedUser);
         assertEq(storedToken, expectedToken);
@@ -1863,5 +1869,214 @@ contract ThresholdCustodyTest_RejectWithdraw is ThresholdCustodyTest_Base {
         // Verify finalized with success=false
         (, , , bool finalized2, , ) = custody.withdrawals(id);
         assertTrue(finalized2);
+    }
+}
+
+// =========================================================================
+// _executeWithdrawal (internal function via harness)
+// =========================================================================
+contract ThresholdCustodyTest_ExecuteWithdrawal is ThresholdCustodyTest_Base {
+    TestThresholdCustody public testCustody;
+
+    uint256 custodyNativeBalance = 1 ether;
+    uint256 custodyErc20Balance = 10e18;
+    uint256 withdrawalAmount = 1e17;
+
+    function setUp() public override {
+        super.setUp();
+        testCustody = new TestThresholdCustody(oneSigner, 1);
+        vm.deal(address(testCustody), custodyNativeBalance);
+        token.mint(address(testCustody), custodyErc20Balance);
+    }
+
+    function _createWithdrawal(address withdrawalToken, uint256 amount) internal returns (bytes32) {
+        vm.prank(signer1);
+        bytes32 id = testCustody.startWithdraw(user, withdrawalToken, amount, 1);
+        return id;
+    }
+
+    function _validateWithdrawalData(bytes32 id, address expectedUser, address expectedToken, uint256 expectedAmount, bool expectedFinalized, uint64 expectedThreshold, uint64 expectedCreatedAt) internal view override {
+        (address storedUser, address storedToken, uint256 storedAmount, bool storedFinalized, uint64 storedCreatedAt, uint64 storedThreshold) = testCustody.withdrawals(id);
+        assertEq(storedUser, expectedUser);
+        assertEq(storedToken, expectedToken);
+        assertEq(storedAmount, expectedAmount);
+        assertEq(storedFinalized, expectedFinalized);
+        assertEq(storedThreshold, expectedThreshold);
+        assertEq(storedCreatedAt, expectedCreatedAt);
+    }
+
+    function test_success_eth() public {
+        bytes32 id = _createWithdrawal(address(0), withdrawalAmount);
+        uint64 expectedThreshold = 1;
+        uint64 createdAt = uint64(block.timestamp);
+
+        testCustody.exposed_executeWithdrawal(id);
+
+        // Verify finalized is set to true, user/token/amount are cleared
+        _validateWithdrawalData(id, address(0), address(0), 0, true, expectedThreshold, createdAt);
+
+        assertEq(address(testCustody).balance, custodyNativeBalance - withdrawalAmount);
+        assertEq(user.balance, withdrawalAmount);
+    }
+
+    function test_success_erc20() public {
+        bytes32 id = _createWithdrawal(address(token), withdrawalAmount);
+        uint64 expectedThreshold = 1;
+        uint64 createdAt = uint64(block.timestamp);
+
+        testCustody.exposed_executeWithdrawal(id);
+
+        // Verify finalized is set to true, user/token/amount are cleared
+        _validateWithdrawalData(id, address(0), address(0), 0, true, expectedThreshold, createdAt);
+
+        assertEq(token.balanceOf(address(testCustody)), custodyErc20Balance - withdrawalAmount);
+        assertEq(token.balanceOf(user), withdrawalAmount);
+    }
+
+    function test_revert_eth_insufficientLiquidity() public {
+        bytes32 id = _createWithdrawal(address(0), custodyNativeBalance + 1);
+
+        vm.expectRevert(IWithdraw.InsufficientLiquidity.selector);
+        testCustody.exposed_executeWithdrawal(id);
+    }
+
+    function test_revert_erc20_insufficientLiquidity() public {
+        bytes32 id = _createWithdrawal(address(token), custodyErc20Balance + 1);
+
+        vm.expectRevert(IWithdraw.InsufficientLiquidity.selector);
+        testCustody.exposed_executeWithdrawal(id);
+    }
+}
+
+// =========================================================================
+// _countValidApprovals (internal function via harness)
+// =========================================================================
+contract ThresholdCustodyTest_CountValidApprovals is ThresholdCustodyTest_Base {
+    using {Utils.hashArrayed} for address[];
+
+    TestThresholdCustody public testCustody;
+    bytes32 withdrawalId;
+
+    function setUp() public override {
+        super.setUp();
+    }
+
+    function _setupCustody(address[] memory signers, uint64 threshold) internal {
+        testCustody = new TestThresholdCustody(signers, threshold);
+        vm.deal(address(testCustody), 1 ether);
+
+        // Create a withdrawal
+        vm.prank(signers[0]);
+        withdrawalId = testCustody.startWithdraw(user, address(0), 1e17, 1);
+    }
+
+
+    function _testCustodyDomainSeparator() internal view returns (bytes32) {
+        return _domainSeparator(address(testCustody));
+    }
+
+    function _signRemoveSignersForTestCustody(
+        uint256 pk,
+        address[] memory signersToRemove,
+        uint256 newThreshold,
+        uint256 nonce,
+        uint256 deadline
+    ) internal view returns (bytes memory) {
+        bytes32 structHash = keccak256(
+            abi.encode(REMOVE_SIGNERS_TYPEHASH, signersToRemove.hashArrayed(), newThreshold, nonce, deadline)
+        );
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", _testCustodyDomainSeparator(), structHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function test_zero_forNoApprovals() public {
+        _setupCustody(threeSigners, 2);
+
+        uint256 count = testCustody.exposed_countValidApprovals(withdrawalId);
+        assertEq(count, 0);
+    }
+
+    function test_1_for1Approval() public {
+        _setupCustody(threeSigners, 2);
+
+        testCustody.workaround_setWithdrawalApproval(withdrawalId, signer1, true);
+
+        uint256 count = testCustody.exposed_countValidApprovals(withdrawalId);
+        assertEq(count, 1);
+    }
+
+    function test_approvalReduces_afterSignerRemoval() public {
+        _setupCustody(threeSigners, 1);
+
+        testCustody.workaround_setWithdrawalApproval(withdrawalId, signer1, true);
+        testCustody.workaround_setWithdrawalApproval(withdrawalId, signer2, true);
+
+        uint256 countBefore = testCustody.exposed_countValidApprovals(withdrawalId);
+        assertEq(countBefore, 2, "Should have 2 approvals before removal");
+
+        // Remove signer2 using threshold=1
+        address[] memory toRemove = new address[](1);
+        toRemove[0] = signer2;
+
+        uint256 nonce = testCustody.signerNonce();
+        bytes memory sig = _signRemoveSignersForTestCustody(signer1Pk, toRemove, 1, nonce, MAX_DEADLINE);
+        bytes memory encodedSigs = _encodeMultiSig(signer1, sig);
+
+        testCustody.removeSigners(toRemove, 1, MAX_DEADLINE, encodedSigs);
+
+        // Count should now be 1 (only signer1's approval counts)
+        uint256 countAfter = testCustody.exposed_countValidApprovals(withdrawalId);
+        assertEq(countAfter, 1, "Should have 1 approval after removal");
+    }
+
+    function _signerPk(uint256 i) internal pure returns (uint256) {
+        return uint256(keccak256(abi.encode("fuzz_signer", i))) % (type(uint256).max - 1) + 1;
+    }
+
+    // restrict to uint8 to avoid memory issues with large arrays in fuzzing
+    function testFuzz_countValidApprovals(uint8 x, uint8 y, uint8 z) public {
+        // Constrain: x signers total, y approvals, z signers to remove
+        vm.assume(x >= 1);
+        vm.assume(y <= x);
+        vm.assume(z <= y);
+        vm.assume(z < x); // Cannot remove all signers
+
+        // Create array of x signers
+        address[] memory signers = new address[](x);
+        for (uint256 i = 0; i < x; i++) {
+            signers[i] = vm.addr(_signerPk(i));
+        }
+
+        // Setup custody with threshold=1 for easy operations
+        testCustody = new TestThresholdCustody(signers, 1);
+
+        withdrawalId = bytes32("deadbeef");
+
+        // Approve y signers
+        for (uint256 i = 0; i < y; i++) {
+            testCustody.workaround_setWithdrawalApproval(withdrawalId, signers[i], true);
+        }
+
+        uint256 countBefore = testCustody.exposed_countValidApprovals(withdrawalId);
+        assertEq(countBefore, y, "Should have y approvals before removal");
+
+        // Remove z signers (from the ones that approved)
+        if (z > 0) {
+            address[] memory toRemove = new address[](z);
+            for (uint256 i = 0; i < z; i++) {
+                toRemove[i] = signers[i];
+            }
+
+            uint256 nonce = testCustody.signerNonce();
+            uint256 signerPk = _signerPk(0);
+            bytes memory sig = _signRemoveSignersForTestCustody(signerPk, toRemove, 1, nonce, MAX_DEADLINE);
+            bytes memory encodedSigs = _encodeMultiSig(signers[0], sig);
+
+            testCustody.removeSigners(toRemove, 1, MAX_DEADLINE, encodedSigs);
+
+            uint256 countAfter = testCustody.exposed_countValidApprovals(withdrawalId);
+            assertEq(countAfter, y - z, "Should have (y - z) approvals after removal");
+        }
     }
 }
