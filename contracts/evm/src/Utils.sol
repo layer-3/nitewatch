@@ -2,12 +2,12 @@
 pragma solidity ^0.8.30;
 
 library Utils {
-    function getWithdrawalId(address user, address token, uint256 amount, uint256 nonce)
+    function getWithdrawalId(address custodyAddress, address user, address token, uint256 amount, uint256 nonce)
         internal
         view
         returns (bytes32)
     {
-        return keccak256(abi.encode(block.chainid, address(this), user, token, amount, nonce));
+        return keccak256(abi.encode(block.chainid, custodyAddress, user, token, amount, nonce));
     }
 
     // Helpers for conversion
@@ -23,7 +23,7 @@ library Utils {
         return b;
     }
 
-    function hashArrayed(address[] calldata arr) internal pure returns (bytes32) {
+    function hashArrayed(address[] memory arr) internal pure returns (bytes32) {
         bytes32[] memory encoded = new bytes32[](arr.length);
         for (uint256 i = 0; i < arr.length; i++) {
             encoded[i] = bytes32(uint256(uint160(arr[i])));

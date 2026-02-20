@@ -11,13 +11,21 @@ import {IWithdraw} from "./interfaces/IWithdraw.sol";
 import {IDeposit} from "./interfaces/IDeposit.sol";
 import {Utils} from "./Utils.sol";
 
+bytes32 constant SET_THRESHOLD_TYPEHASH =
+    keccak256("SetThreshold(uint256 newThreshold,uint256 nonce,uint256 deadline)");
+bytes32 constant ADD_SIGNERS_TYPEHASH =
+    keccak256("AddSigners(address[] newSigners,uint256 newThreshold,uint256 nonce,uint256 deadline)");
+bytes32 constant REMOVE_SIGNERS_TYPEHASH =
+    keccak256("RemoveSigners(address[] signersToRemove,uint256 newThreshold,uint256 nonce,uint256 deadline)");
+
+uint256 constant OPERATION_EXPIRY = 1 hours;
+
 contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, MultiSignerERC7913 {
     using SafeERC20 for IERC20;
     using {Utils.hashArrayed, Utils.toAddressBytesArray} for address[];
     using {Utils.toBytes} for address;
     using {Utils.toAddress} for bytes;
 
-    // Contract-specific errors
     error EmptySignersArray();
     error DeadlineExpired();
     error InvalidSignature();
@@ -38,13 +46,6 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
         uint64 requiredThreshold;
     }
 
-    bytes32 public constant ADD_SIGNERS_TYPEHASH =
-        keccak256("AddSigners(address[] newSigners,uint256 newThreshold,uint256 nonce,uint256 deadline)");
-    bytes32 public constant REMOVE_SIGNERS_TYPEHASH =
-        keccak256("RemoveSigners(address[] signersToRemove,uint256 newThreshold,uint256 nonce,uint256 deadline)");
-
-    uint256 public constant OPERATION_EXPIRY = 1 hours;
-
     mapping(bytes32 withdrawalId => WithdrawalRequest request) public withdrawals;
     mapping(bytes32 withdrawalId => mapping(address signer => bool hasApproved)) public withdrawalApprovals;
     uint256 public signerNonce;
@@ -54,7 +55,6 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
         MultiSignerERC7913(initialSigners.toAddressBytesArray(), threshold)
     {
         require(initialSigners.length != 0, EmptySignersArray());
-        require(threshold != 0 && threshold <= initialSigners.length, InvalidThreshold());
     }
 
     modifier onlySigner() {
@@ -66,9 +66,21 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
         return isSigner(signer.toBytes());
     }
 
+    function setThreshold(uint64 newThreshold, uint256 deadline, bytes calldata signatures) external {
+        require(block.timestamp <= deadline, DeadlineExpired());
+
+        bytes32 structHash = keccak256(abi.encode(SET_THRESHOLD_TYPEHASH, newThreshold, signerNonce, deadline));
+        bytes32 digest = _hashTypedDataV4(structHash);
+
+        require(_rawSignatureValidation(digest, signatures), InvalidSignature());
+
+        signerNonce++;
+
+        _setThreshold(newThreshold);
+    }
+
     function addSigners(address[] calldata newSigners, uint64 newThreshold, uint256 deadline, bytes calldata signatures)
         external
-        onlySigner
     {
         require(block.timestamp <= deadline, DeadlineExpired());
         require(newSigners.length != 0, EmptySignersArray());
@@ -91,7 +103,7 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
         uint64 newThreshold,
         uint256 deadline,
         bytes calldata signatures
-    ) external onlySigner {
+    ) external {
         require(block.timestamp <= deadline, DeadlineExpired());
         require(signersToRemove.length != 0, EmptySignersArray());
 
@@ -131,7 +143,7 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
         require(user != address(0), InvalidUser());
         require(amount != 0, IDeposit.ZeroAmount());
 
-        bytes32 withdrawalId = Utils.getWithdrawalId(user, token, amount, nonce);
+        bytes32 withdrawalId = Utils.getWithdrawalId(address(this), user, token, amount, nonce);
         require(withdrawals[withdrawalId].createdAt == 0, IWithdraw.WithdrawalAlreadyExists());
 
         withdrawals[withdrawalId] = WithdrawalRequest({
