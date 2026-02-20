@@ -7,7 +7,13 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MultiSignerERC7913} from "@openzeppelin/contracts/utils/cryptography/signers/MultiSignerERC7913.sol";
 
-import {ThresholdCustody, SET_THRESHOLD_TYPEHASH, ADD_SIGNERS_TYPEHASH, REMOVE_SIGNERS_TYPEHASH, OPERATION_EXPIRY} from "../src/ThresholdCustody.sol";
+import {
+    ThresholdCustody,
+    SET_THRESHOLD_TYPEHASH,
+    ADD_SIGNERS_TYPEHASH,
+    REMOVE_SIGNERS_TYPEHASH,
+    OPERATION_EXPIRY
+} from "../src/ThresholdCustody.sol";
 import {IWithdraw} from "../src/interfaces/IWithdraw.sol";
 import {IDeposit} from "../src/interfaces/IDeposit.sol";
 import {Utils} from "../src/Utils.sol";
@@ -95,12 +101,11 @@ contract ThresholdCustodyTest_Base is Test {
         return _domainSeparator(address(custody));
     }
 
-    function _signSetThreshold(
-        uint256 pk,
-        uint256 newThreshold,
-        uint256 nonce,
-        uint256 deadline
-    ) internal view returns (bytes memory) {
+    function _signSetThreshold(uint256 pk, uint256 newThreshold, uint256 nonce, uint256 deadline)
+        internal
+        view
+        returns (bytes memory)
+    {
         bytes32 structHash = keccak256(abi.encode(SET_THRESHOLD_TYPEHASH, newThreshold, nonce, deadline));
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
@@ -154,12 +159,11 @@ contract ThresholdCustodyTest_Base is Test {
         return abi.encode(emptySigners, emptySignatures);
     }
 
-    function _signSingleSetThreshold(
-        uint256 pk,
-        uint256 newThreshold,
-        uint256 nonce,
-        uint256 deadline
-    ) internal view returns (bytes memory) {
+    function _signSingleSetThreshold(uint256 pk, uint256 newThreshold, uint256 nonce, uint256 deadline)
+        internal
+        view
+        returns (bytes memory)
+    {
         address signer = vm.addr(pk);
         bytes memory sig = _signSetThreshold(pk, newThreshold, nonce, deadline);
         return _encodeMultiSig(signer, sig);
@@ -251,8 +255,23 @@ contract ThresholdCustodyTest_Base is Test {
         assertEq(custody.signerNonce(), newNonce);
     }
 
-    function _validateWithdrawalData(bytes32 id, address expectedUser, address expectedToken, uint256 expectedAmount, bool expectedFinalized, uint64 expectedThreshold, uint64 expectedCreatedAt) internal view virtual {
-        (address storedUser, address storedToken, uint256 storedAmount, bool storedFinalized, uint64 storedCreatedAt, uint64 storedThreshold) = custody.withdrawals(id);
+    function _validateWithdrawalData(
+        bytes32 id,
+        address expectedUser,
+        address expectedToken,
+        uint256 expectedAmount,
+        bool expectedFinalized,
+        uint64 expectedThreshold,
+        uint64 expectedCreatedAt
+    ) internal view virtual {
+        (
+            address storedUser,
+            address storedToken,
+            uint256 storedAmount,
+            bool storedFinalized,
+            uint64 storedCreatedAt,
+            uint64 storedThreshold
+        ) = custody.withdrawals(id);
         assertEq(storedUser, expectedUser);
         assertEq(storedToken, expectedToken);
         assertEq(storedAmount, expectedAmount);
@@ -295,7 +314,9 @@ contract ThresholdCustodyTest_Constructor is ThresholdCustodyTest_Base {
 
     function test_revert_emptySigners() public {
         address[] memory s = new address[](0);
-        vm.expectRevert(abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913UnreachableThreshold.selector, 0, 1));
+        vm.expectRevert(
+            abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913UnreachableThreshold.selector, 0, 1)
+        );
         new ThresholdCustody(s, 1);
     }
 
@@ -303,7 +324,9 @@ contract ThresholdCustodyTest_Constructor is ThresholdCustodyTest_Base {
         address[] memory s = new address[](2);
         s[0] = signer1;
         s[1] = signer1;
-        vm.expectRevert(abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913AlreadyExists.selector, signer1.toBytes()));
+        vm.expectRevert(
+            abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913AlreadyExists.selector, signer1.toBytes())
+        );
         new ThresholdCustody(s, 1);
     }
 
@@ -317,7 +340,9 @@ contract ThresholdCustodyTest_Constructor is ThresholdCustodyTest_Base {
     function test_revert_quorumNotReachable() public {
         address[] memory s = new address[](1);
         s[0] = signer1;
-        vm.expectRevert(abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913UnreachableThreshold.selector, 1, 2));
+        vm.expectRevert(
+            abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913UnreachableThreshold.selector, 1, 2)
+        );
         new ThresholdCustody(s, 2);
     }
 }
@@ -509,7 +534,9 @@ contract ThresholdCustodyTest_SetThreshold is ThresholdCustodyTest_Base {
         uint256 nonce = custody.signerNonce();
         bytes memory sigs = _signSingleSetThreshold(signer1Pk, newThreshold, nonce, MAX_DEADLINE);
 
-        vm.expectRevert(abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913UnreachableThreshold.selector, 1, 3));
+        vm.expectRevert(
+            abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913UnreachableThreshold.selector, 1, 3)
+        );
         custody.setThreshold(newThreshold, MAX_DEADLINE, sigs);
     }
 
@@ -573,22 +600,22 @@ contract ThresholdCustodyTest_AddSigners is ThresholdCustodyTest_Base {
     }
 
     function test_success_onlyAddSigners() public {
-            custody = new ThresholdCustody(oneSigner, 1);
+        custody = new ThresholdCustody(oneSigner, 1);
 
-            address[] memory newSigners = new address[](2);
-            newSigners[0] = signer2;
-            newSigners[1] = signer3;
+        address[] memory newSigners = new address[](2);
+        newSigners[0] = signer2;
+        newSigners[1] = signer3;
 
-            uint64 newThreshold = 1; // no change
-            uint256 nonce = custody.signerNonce();
-            bytes memory sigs = _signSingleAdd(signer1Pk, newSigners, newThreshold, nonce, MAX_DEADLINE);
+        uint64 newThreshold = 1; // no change
+        uint256 nonce = custody.signerNonce();
+        bytes memory sigs = _signSingleAdd(signer1Pk, newSigners, newThreshold, nonce, MAX_DEADLINE);
 
-            custody.addSigners(newSigners, newThreshold, MAX_DEADLINE, sigs);
+        custody.addSigners(newSigners, newThreshold, MAX_DEADLINE, sigs);
 
-            assertTrue(custody.isSigner(signer1));
-            assertTrue(custody.isSigner(signer2));
-            assertTrue(custody.isSigner(signer3));
-            _checkStats(3, newThreshold, ++nonce);
+        assertTrue(custody.isSigner(signer1));
+        assertTrue(custody.isSigner(signer2));
+        assertTrue(custody.isSigner(signer3));
+        _checkStats(3, newThreshold, ++nonce);
     }
 
     function test_success_2_of_3_signatures_1_and_2() public {
@@ -776,7 +803,9 @@ contract ThresholdCustodyTest_AddSigners is ThresholdCustodyTest_Base {
         uint256 nonce = custody.signerNonce();
         bytes memory sigs = _signSingleAdd(signer1Pk, newSigners, newThreshold, nonce, MAX_DEADLINE);
 
-        vm.expectRevert(abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913AlreadyExists.selector, signer1.toBytes()));
+        vm.expectRevert(
+            abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913AlreadyExists.selector, signer1.toBytes())
+        );
         custody.addSigners(newSigners, newThreshold, MAX_DEADLINE, sigs);
     }
 
@@ -791,7 +820,9 @@ contract ThresholdCustodyTest_AddSigners is ThresholdCustodyTest_Base {
         uint256 nonce = custody.signerNonce();
         bytes memory sigs = _signSingleAdd(signer1Pk, newSigners, newThreshold, nonce, MAX_DEADLINE);
 
-        vm.expectRevert(abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913AlreadyExists.selector, signer2.toBytes()));
+        vm.expectRevert(
+            abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913AlreadyExists.selector, signer2.toBytes())
+        );
         custody.addSigners(newSigners, newThreshold, MAX_DEADLINE, sigs);
     }
 
@@ -819,7 +850,9 @@ contract ThresholdCustodyTest_AddSigners is ThresholdCustodyTest_Base {
         uint256 nonce = custody.signerNonce();
         bytes memory sigs = _signSingleAdd(signer1Pk, newSigners, newThreshold, nonce, MAX_DEADLINE);
 
-        vm.expectRevert(abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913UnreachableThreshold.selector, 2, 3));
+        vm.expectRevert(
+            abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913UnreachableThreshold.selector, 2, 3)
+        );
         custody.addSigners(newSigners, newThreshold, MAX_DEADLINE, sigs);
     }
 
@@ -1081,7 +1114,9 @@ contract ThresholdCustodyTest_RemoveSigners is ThresholdCustodyTest_Base {
         bytes memory sig2 = _signRemoveSigners(signer2Pk, signersToRemove, newThreshold, nonce, MAX_DEADLINE);
         bytes memory encodedSigs = _encodeMultiSig2(signer1, sig1, signer2, sig2);
 
-        vm.expectRevert(abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913NonexistentSigner.selector, signer3.toBytes()));
+        vm.expectRevert(
+            abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913NonexistentSigner.selector, signer3.toBytes())
+        );
         custody.removeSigners(signersToRemove, newThreshold, MAX_DEADLINE, encodedSigs);
     }
 
@@ -1098,7 +1133,9 @@ contract ThresholdCustodyTest_RemoveSigners is ThresholdCustodyTest_Base {
         bytes memory sig2 = _signRemoveSigners(signer2Pk, signersToRemove, newThreshold, nonce, MAX_DEADLINE);
         bytes memory encodedSigs = _encodeMultiSig2(signer1, sig1, signer2, sig2);
 
-        vm.expectRevert(abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913NonexistentSigner.selector, signer3.toBytes()));
+        vm.expectRevert(
+            abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913NonexistentSigner.selector, signer3.toBytes())
+        );
         custody.removeSigners(signersToRemove, newThreshold, MAX_DEADLINE, encodedSigs);
     }
 
@@ -1115,7 +1152,9 @@ contract ThresholdCustodyTest_RemoveSigners is ThresholdCustodyTest_Base {
         bytes memory sig2 = _signRemoveSigners(signer2Pk, signersToRemove, newThreshold, nonce, MAX_DEADLINE);
         bytes memory encodedSigs = _encodeMultiSig2(signer1, sig1, signer2, sig2);
 
-        vm.expectRevert(abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913UnreachableThreshold.selector, 0, 2));
+        vm.expectRevert(
+            abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913UnreachableThreshold.selector, 0, 2)
+        );
         custody.removeSigners(signersToRemove, newThreshold, MAX_DEADLINE, encodedSigs);
     }
 
@@ -1143,7 +1182,9 @@ contract ThresholdCustodyTest_RemoveSigners is ThresholdCustodyTest_Base {
         uint256 nonce = custody.signerNonce();
         bytes memory sigs = _signSingleRemove(signer1Pk, signersToRemove, newThreshold, nonce, MAX_DEADLINE);
 
-        vm.expectRevert(abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913UnreachableThreshold.selector, 1, 2));
+        vm.expectRevert(
+            abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913UnreachableThreshold.selector, 1, 2)
+        );
         custody.removeSigners(signersToRemove, newThreshold, MAX_DEADLINE, sigs);
     }
 
@@ -1383,7 +1424,10 @@ contract ThresholdCustodyTest_FinalizeWithdraw is ThresholdCustodyTest_Base {
     uint256 withdrawalAmount = 1e17;
     uint256 nonce = 1;
 
-    function _setUpTest(address[] memory signers, uint64 threshold, address withdrawalToken, uint256 withdrawalAmount_) public returns (bytes32) {
+    function _setUpTest(address[] memory signers, uint64 threshold, address withdrawalToken, uint256 withdrawalAmount_)
+        public
+        returns (bytes32)
+    {
         custody = new ThresholdCustody(signers, threshold);
         vm.deal(address(custody), custodyNativeBalance);
         token.mint(address(custody), custodyErc20Balance);
@@ -1719,12 +1763,15 @@ contract ThresholdCustodyTest_FinalizeWithdraw is ThresholdCustodyTest_Base {
 // rejectWithdraw
 // =========================================================================
 contract ThresholdCustodyTest_RejectWithdraw is ThresholdCustodyTest_Base {
-     uint256 custodyNativeBalance = 1 ether;
+    uint256 custodyNativeBalance = 1 ether;
     uint256 custodyErc20Balance = 10e18;
     uint256 withdrawalAmount = 1e17;
     uint256 nonce = 1;
 
-    function _setUpTest(address[] memory signers, uint64 threshold, address withdrawalToken, uint256 withdrawalAmount_) public returns (bytes32) {
+    function _setUpTest(address[] memory signers, uint64 threshold, address withdrawalToken, uint256 withdrawalAmount_)
+        public
+        returns (bytes32)
+    {
         custody = new ThresholdCustody(signers, threshold);
         vm.deal(address(custody), custodyNativeBalance);
         token.mint(address(custody), custodyErc20Balance);
@@ -1856,7 +1903,7 @@ contract ThresholdCustodyTest_RejectWithdraw is ThresholdCustodyTest_Base {
         custody.finalizeWithdraw(id);
 
         // Verify not finalized yet
-        (, , , bool finalized1, , ) = custody.withdrawals(id);
+        (,,, bool finalized1,,) = custody.withdrawals(id);
         assertFalse(finalized1);
 
         // Warp past expiry
@@ -1867,7 +1914,7 @@ contract ThresholdCustodyTest_RejectWithdraw is ThresholdCustodyTest_Base {
         custody.rejectWithdraw(id);
 
         // Verify finalized with success=false
-        (, , , bool finalized2, , ) = custody.withdrawals(id);
+        (,,, bool finalized2,,) = custody.withdrawals(id);
         assertTrue(finalized2);
     }
 }
@@ -1895,8 +1942,23 @@ contract ThresholdCustodyTest_ExecuteWithdrawal is ThresholdCustodyTest_Base {
         return id;
     }
 
-    function _validateWithdrawalData(bytes32 id, address expectedUser, address expectedToken, uint256 expectedAmount, bool expectedFinalized, uint64 expectedThreshold, uint64 expectedCreatedAt) internal view override {
-        (address storedUser, address storedToken, uint256 storedAmount, bool storedFinalized, uint64 storedCreatedAt, uint64 storedThreshold) = testCustody.withdrawals(id);
+    function _validateWithdrawalData(
+        bytes32 id,
+        address expectedUser,
+        address expectedToken,
+        uint256 expectedAmount,
+        bool expectedFinalized,
+        uint64 expectedThreshold,
+        uint64 expectedCreatedAt
+    ) internal view override {
+        (
+            address storedUser,
+            address storedToken,
+            uint256 storedAmount,
+            bool storedFinalized,
+            uint64 storedCreatedAt,
+            uint64 storedThreshold
+        ) = testCustody.withdrawals(id);
         assertEq(storedUser, expectedUser);
         assertEq(storedToken, expectedToken);
         assertEq(storedAmount, expectedAmount);
@@ -1969,7 +2031,6 @@ contract ThresholdCustodyTest_CountValidApprovals is ThresholdCustodyTest_Base {
         vm.prank(signers[0]);
         withdrawalId = testCustody.startWithdraw(user, address(0), 1e17, 1);
     }
-
 
     function _testCustodyDomainSeparator() internal view returns (bytes32) {
         return _domainSeparator(address(testCustody));

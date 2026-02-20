@@ -85,9 +85,8 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
         require(block.timestamp <= deadline, DeadlineExpired());
         require(newSigners.length != 0, EmptySignersArray());
 
-        bytes32 structHash = keccak256(
-            abi.encode(ADD_SIGNERS_TYPEHASH, newSigners.hashArrayed(), newThreshold, signerNonce, deadline)
-        );
+        bytes32 structHash =
+            keccak256(abi.encode(ADD_SIGNERS_TYPEHASH, newSigners.hashArrayed(), newThreshold, signerNonce, deadline));
         bytes32 digest = _hashTypedDataV4(structHash);
 
         require(_rawSignatureValidation(digest, signatures), InvalidSignature());
