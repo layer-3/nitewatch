@@ -73,7 +73,7 @@ contract SimpleCustodyTest is Test {
     function test_depositETH_wrongAmount() public {
         vm.deal(user, 2 ether);
         vm.prank(user);
-        vm.expectRevert(IDeposit.MsgValueMismatch.selector);
+        vm.expectRevert(IDeposit.InvalidMsgValue.selector);
         custody.deposit{value: 1 ether}(address(0), 2 ether);
     }
 
@@ -84,7 +84,7 @@ contract SimpleCustodyTest is Test {
         vm.startPrank(user);
         token.approve(address(custody), 100e18);
 
-        vm.expectRevert(IDeposit.NonZeroMsgValueForERC20.selector);
+        vm.expectRevert(IDeposit.InvalidMsgValue.selector);
         custody.deposit{value: 1 ether}(address(token), 100e18);
         vm.stopPrank();
     }
@@ -120,13 +120,13 @@ contract SimpleCustodyTest is Test {
 
     function test_deposit_zeroAmount() public {
         vm.prank(user);
-        vm.expectRevert(IWithdraw.ZeroAmount.selector);
+        vm.expectRevert(IDeposit.ZeroAmount.selector);
         custody.deposit{value: 0}(address(0), 0);
     }
 
     function test_startWithdraw_zeroAmount() public {
         vm.startPrank(neodax);
-        vm.expectRevert(IWithdraw.ZeroAmount.selector);
+        vm.expectRevert(IDeposit.ZeroAmount.selector);
         custody.startWithdraw(user, address(0), 0, 1);
         vm.stopPrank();
     }

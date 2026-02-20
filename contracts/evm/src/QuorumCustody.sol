@@ -13,6 +13,7 @@ import {IDeposit} from "./interfaces/IDeposit.sol";
 contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
     using SafeERC20 for IERC20;
 
+    // Contract-specific errors
     error InvalidSigner();
     error NotSigner();
     error AlreadySigner();
@@ -154,12 +155,12 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
     }
 
     function deposit(address token, uint256 amount) external payable override nonReentrant {
-        require(amount != 0, ZeroAmount());
+        require(amount != 0, IDeposit.ZeroAmount());
 
         if (token == address(0)) {
-            require(msg.value == amount, MsgValueMismatch());
+            require(msg.value == amount, IDeposit.InvalidMsgValue());
         } else {
-            require(msg.value == 0, NonZeroMsgValueForERC20());
+            require(msg.value == 0, IDeposit.InvalidMsgValue());
             IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         }
 
@@ -174,10 +175,10 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
         returns (bytes32)
     {
         require(user != address(0), InvalidUser());
-        require(amount != 0, ZeroAmount());
+        require(amount != 0, IDeposit.ZeroAmount());
 
         bytes32 withdrawalId = _getWithdrawalId(user, token, amount, nonce);
-        require(withdrawals[withdrawalId].createdAt == 0, WithdrawalAlreadyExists());
+        require(withdrawals[withdrawalId].createdAt == 0, IWithdraw.WithdrawalAlreadyExists());
 
         withdrawals[withdrawalId] = WithdrawalRequest({
             user: user,
@@ -196,8 +197,8 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
         WithdrawalRequest storage request = withdrawals[withdrawalId];
         address signer = msg.sender;
 
-        require(request.createdAt != 0, WithdrawalNotFound());
-        require(!request.finalized, WithdrawalAlreadyFinalized());
+        require(request.createdAt != 0, IWithdraw.WithdrawalNotFound());
+        require(!request.finalized, IWithdraw.WithdrawalAlreadyFinalized());
         require(block.timestamp <= request.createdAt + OPERATION_EXPIRY, WithdrawalExpired());
         require(!withdrawalApprovals[withdrawalId][signer], SignerAlreadyApproved());
 
@@ -215,8 +216,8 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
     function rejectWithdraw(bytes32 withdrawalId) external override onlySigner nonReentrant {
         WithdrawalRequest storage request = withdrawals[withdrawalId];
 
-        require(request.createdAt != 0, WithdrawalNotFound());
-        require(!request.finalized, WithdrawalAlreadyFinalized());
+        require(request.createdAt != 0, IWithdraw.WithdrawalNotFound());
+        require(!request.finalized, IWithdraw.WithdrawalAlreadyFinalized());
         require(block.timestamp > request.createdAt + OPERATION_EXPIRY, WithdrawalNotExpired());
 
         request.finalized = true;
@@ -241,11 +242,11 @@ contract QuorumCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712 {
         request.finalized = true;
 
         if (token == address(0)) {
-            require(address(this).balance >= amount, InsufficientLiquidity());
+            require(address(this).balance >= amount, IWithdraw.InsufficientLiquidity());
             (bool success,) = user.call{value: amount}("");
-            require(success, ETHTransferFailed());
+            require(success, IWithdraw.ETHTransferFailed());
         } else {
-            require(IERC20(token).balanceOf(address(this)) >= amount, InsufficientLiquidity());
+            require(IERC20(token).balanceOf(address(this)) >= amount, IWithdraw.InsufficientLiquidity());
             IERC20(token).safeTransfer(user, amount);
         }
 
