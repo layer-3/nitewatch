@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -107,7 +108,8 @@ func NewWithBackend(conf config.Config, client custody.EthBackend) (*Service, er
 		return nil, fmt.Errorf("failed to get chain ID: %w", err)
 	}
 
-	key, err := crypto.HexToECDSA(conf.Blockchain.PrivateKey)
+	pk := strings.TrimPrefix(conf.Blockchain.PrivateKey, "0x")
+	key, err := crypto.HexToECDSA(pk)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse private key: %w", err)
 	}

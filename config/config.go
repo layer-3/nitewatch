@@ -94,7 +94,14 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config file: %w", err)
 	}
+	return parse(data)
+}
 
+func LoadFromEnv(data string) (*Config, error) {
+	return parse([]byte(data))
+}
+
+func parse(data []byte) (*Config, error) {
 	expanded := os.ExpandEnv(string(data))
 
 	var cfg Config
