@@ -15,12 +15,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	configPath := os.Getenv("NITEWATCH_CONFIG")
-	if configPath == "" {
-		configPath = "config.yaml"
-	}
-
-	conf, err := config.Load(configPath)
+	conf, err := loadConfig()
 	if err != nil {
 		slog.Error("Failed to load configuration", "error", err)
 		os.Exit(1)
@@ -36,4 +31,15 @@ func main() {
 		slog.Error("Worker failed", "error", err)
 		os.Exit(1)
 	}
+}
+
+func loadConfig() (*config.Config, error) {
+	if raw := os.Getenv("NITEWATCH_CONFIG"); raw != "" {
+		return config.LoadFromEnv(raw)
+	}
+	configPath := os.Getenv("NITEWATCH_CONFIG_PATH")
+	if configPath == "" {
+		configPath = "config.yaml"
+	}
+	return config.Load(configPath)
 }
