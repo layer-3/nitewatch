@@ -1,5 +1,5 @@
 SOL_SOURCES := $(shell find contracts/evm/src -name '*.sol')
-BINDINGS    := custody/iwithdraw.go custody/ideposit.go custody/simple_custody.go custody/threshold_custody.go
+BINDINGS    := custody/iwithdraw.go custody/ideposit.go custody/simple_custody.go custody/quorum_custody.go custody/threshold_custody.go
 
 .PHONY: generate
 generate: $(BINDINGS)
@@ -22,8 +22,12 @@ custody/simple_custody.go: contracts/evm/out/.build-sentinel
 	jq -r .bytecode.object contracts/evm/out/SimpleCustody.sol/SimpleCustody.json > custody/SimpleCustody.bin
 	abigen --abi custody/SimpleCustody.abi --bin custody/SimpleCustody.bin --pkg custody --type SimpleCustody --out $@
 
+custody/quorum_custody.go: contracts/evm/out/.build-sentinel
+	jq .abi contracts/evm/out/QuorumCustody.sol/QuorumCustody.json > custody/QuorumCustody.abi
+	jq -r .bytecode.object contracts/evm/out/QuorumCustody.sol/QuorumCustody.json > custody/QuorumCustody.bin
+	abigen --abi custody/QuorumCustody.abi --bin custody/QuorumCustody.bin --pkg custody --type QuorumCustody --out $@
+
 custody/threshold_custody.go: contracts/evm/out/.build-sentinel
 	jq .abi contracts/evm/out/ThresholdCustody.sol/ThresholdCustody.json > custody/ThresholdCustody.abi
 	jq -r .bytecode.object contracts/evm/out/ThresholdCustody.sol/ThresholdCustody.json > custody/ThresholdCustody.bin
 	abigen --abi custody/ThresholdCustody.abi --bin custody/ThresholdCustody.bin --pkg custody --type ThresholdCustody --out $@
-
