@@ -12,7 +12,9 @@ import {
     SET_THRESHOLD_TYPEHASH,
     ADD_SIGNERS_TYPEHASH,
     REMOVE_SIGNERS_TYPEHASH,
-    OPERATION_EXPIRY
+    OPERATION_EXPIRY,
+    NAME,
+    VERSION
 } from "../src/ThresholdCustody.sol";
 import {IWithdraw} from "../src/interfaces/IWithdraw.sol";
 import {IDeposit} from "../src/interfaces/IDeposit.sol";
@@ -89,8 +91,8 @@ contract ThresholdCustodyTest_Base is Test {
         return keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-                keccak256("ThresholdCustody"),
-                keccak256("1"),
+                keccak256(bytes(NAME)),
+                keccak256(bytes(VERSION)),
                 block.chainid,
                 address(contractAddress)
             )
