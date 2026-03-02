@@ -18,6 +18,9 @@ bytes32 constant ADD_SIGNERS_TYPEHASH =
 bytes32 constant REMOVE_SIGNERS_TYPEHASH =
     keccak256("RemoveSigners(address[] signersToRemove,uint256 newThreshold,uint256 nonce,uint256 deadline)");
 
+string constant NAME = "ThresholdCustody";
+string constant VERSION = "1.0.0";
+
 uint256 constant OPERATION_EXPIRY = 1 hours;
 
 contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, MultiSignerERC7913 {
@@ -51,7 +54,7 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
     uint256 public signerNonce;
 
     constructor(address[] memory initialSigners, uint64 threshold)
-        EIP712("ThresholdCustody", "1")
+        EIP712(NAME, VERSION)
         MultiSignerERC7913(initialSigners.toAddressBytesArray(), threshold)
     {
         require(initialSigners.length != 0, EmptySignersArray());
