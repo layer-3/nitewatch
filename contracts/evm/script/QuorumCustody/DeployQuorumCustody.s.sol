@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Script, console} from "forge-std/Script.sol";
-import {QuorumCustody} from "../src/QuorumCustody.sol";
+import {QuorumCustody} from "../../src/QuorumCustody.sol";
 
 contract DeployQuorumCustody is Script {
     function setUp() public {}

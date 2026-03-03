@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Script, console} from "forge-std/Script.sol";
-import {SimpleCustody} from "../src/SimpleCustody.sol";
+import {SimpleCustody} from "../../src/SimpleCustody.sol";
 
 contract DeploySimpleCustody is Script {
     function setUp() public {}
