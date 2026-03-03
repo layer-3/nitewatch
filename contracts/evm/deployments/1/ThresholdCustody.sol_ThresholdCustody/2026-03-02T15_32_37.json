@@ -1,0 +1,14 @@
+{
+  "deployer": "0xd29995d8511Fe2dc1031F2650f950Adf4ECceBAD",
+  "deployedTo": "0x00D55ea7F3AEf21Cc4518e50e4c35Ff0F0c49b0e",
+  "transactionHash": "0x71972ff05fe5b7431684b4091e123ac4d8112ac42f2fd1c846042b470d1374ad",
+  "commit": "29c9d97c8951652f9128e5f0032618b874804d4c",
+  "timestamp": 1772465557,
+  "chainId": 1,
+  "contractPath": "./src/ThresholdCustody.sol:ThresholdCustody",
+  "constructorArgs": [
+    "[0x71233a26D38695286dfa7dABDD1f949bf276aec2,0x8544EC9a39E897068E44cbe074e4f774D9BfE4AB,0xa4d9Aa0A7Fd7F6b219e4C700f6B443fEC8B67C9b]",
+    "2"
+  ],
+  "comment": "v1.0.0"
+}
