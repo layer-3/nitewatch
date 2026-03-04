@@ -103,7 +103,7 @@ contract ThresholdCustodyTest_Base is Test {
         return _domainSeparator(address(custody));
     }
 
-    function _signSetThreshold(uint256 pk, uint256 newThreshold, uint256 nonce, uint256 deadline)
+    function _signSetThreshold(uint256 pk, uint64 newThreshold, uint256 nonce, uint256 deadline)
         internal
         view
         returns (bytes memory)
@@ -117,7 +117,7 @@ contract ThresholdCustodyTest_Base is Test {
     function _signAddSigners(
         uint256 pk,
         address[] memory newSigners,
-        uint256 newThreshold,
+        uint64 newThreshold,
         uint256 nonce,
         uint256 deadline
     ) internal view returns (bytes memory) {
@@ -132,7 +132,7 @@ contract ThresholdCustodyTest_Base is Test {
     function _signRemoveSigners(
         uint256 pk,
         address[] memory signersToRemove,
-        uint256 newThreshold,
+        uint64 newThreshold,
         uint256 nonce,
         uint256 deadline
     ) internal view returns (bytes memory) {
@@ -161,7 +161,7 @@ contract ThresholdCustodyTest_Base is Test {
         return abi.encode(emptySigners, emptySignatures);
     }
 
-    function _signSingleSetThreshold(uint256 pk, uint256 newThreshold, uint256 nonce, uint256 deadline)
+    function _signSingleSetThreshold(uint256 pk, uint64 newThreshold, uint256 nonce, uint256 deadline)
         internal
         view
         returns (bytes memory)
@@ -174,7 +174,7 @@ contract ThresholdCustodyTest_Base is Test {
     function _signSingleAdd(
         uint256 pk,
         address[] memory newSigners,
-        uint256 newThreshold,
+        uint64 newThreshold,
         uint256 nonce,
         uint256 deadline
     ) internal view returns (bytes memory) {
@@ -186,7 +186,7 @@ contract ThresholdCustodyTest_Base is Test {
     function _signSingleRemove(
         uint256 pk,
         address[] memory signersToRemove,
-        uint256 newThreshold,
+        uint64 newThreshold,
         uint256 nonce,
         uint256 deadline
     ) internal view returns (bytes memory) {
@@ -2105,7 +2105,7 @@ contract ThresholdCustodyTest_CountValidApprovals is ThresholdCustodyTest_Base {
     function _signRemoveSignersForTestCustody(
         uint256 pk,
         address[] memory signersToRemove,
-        uint256 newThreshold,
+        uint64 newThreshold,
         uint256 nonce,
         uint256 deadline
     ) internal view returns (bytes memory) {
