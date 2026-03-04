@@ -32,7 +32,6 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
     error EmptySignersArray();
     error DeadlineExpired();
     error InvalidSignature();
-    error InvalidThreshold();
     error NotSigner();
     error InvalidUser();
     error SignerAlreadyApproved();
