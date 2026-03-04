@@ -1373,7 +1373,7 @@ contract ThresholdCustodyTest_StartWithdraw is ThresholdCustodyTest_Base {
     function setUp() public override {
         super.setUp();
 
-        custody = new ThresholdCustody(oneSigner, 1);
+        custody = new ThresholdCustody(twoSigners, 2);
 
         vm.deal(address(custody), 1 ether);
     }
@@ -1389,10 +1389,10 @@ contract ThresholdCustodyTest_StartWithdraw is ThresholdCustodyTest_Base {
 
         bytes32 expectedId = Utils.getWithdrawalId(address(custody), user, token, amount, nonce);
         assertEq(id, expectedId);
-        _validateWithdrawalData(id, user, token, amount, false, 1, uint64(timestamp));
+        _validateWithdrawalData(id, user, token, amount, false, 2, uint64(timestamp));
     }
 
-    function test_success_emitsEvent() public {
+    function test_success_emitsEvent_withdrawalStarted() public {
         address token = address(0);
         uint256 amount = 1 ether;
         uint256 nonce = 1;
@@ -1401,6 +1401,18 @@ contract ThresholdCustodyTest_StartWithdraw is ThresholdCustodyTest_Base {
         vm.expectEmit(true, true, true, true);
         bytes32 expectedId = Utils.getWithdrawalId(address(custody), user, token, amount, nonce);
         emit IWithdraw.WithdrawStarted(expectedId, user, token, amount, nonce);
+        custody.startWithdraw(user, token, amount, nonce);
+    }
+
+    function test_success_emitsEvent_withdrawalApproved() public {
+        address token = address(0);
+        uint256 amount = 1 ether;
+        uint256 nonce = 1;
+
+        vm.prank(signer1);
+        vm.expectEmit(true, true, true, true);
+        bytes32 expectedId = Utils.getWithdrawalId(address(custody), user, token, amount, nonce);
+        emit ThresholdCustody.WithdrawalApproved(expectedId, signer1, 1);
         custody.startWithdraw(user, token, amount, nonce);
     }
 
@@ -1416,9 +1428,74 @@ contract ThresholdCustodyTest_StartWithdraw is ThresholdCustodyTest_Base {
         vm.stopPrank();
 
         assertTrue(id1 != id2);
-        uint64 expectedThreshold = 1;
+        uint64 expectedThreshold = 2;
         _validateWithdrawalData(id1, user, token, amount, false, expectedThreshold, uint64(timestamp));
         _validateWithdrawalData(id2, user, token, amount, false, expectedThreshold, uint64(timestamp));
+    }
+
+    function test_finalizes_ifThresholdIsOne_eth() public {
+        // Deploy a new custody with threshold=1
+        custody = new ThresholdCustody(oneSigner, 1);
+        uint256 custodyInitialBalance = 2 ether;
+        vm.deal(address(custody), custodyInitialBalance);
+
+        address token = address(0);
+        uint256 amount = 1 ether;
+        uint256 nonce = 1;
+        uint256 timestamp = block.timestamp;
+
+        vm.prank(signer1);
+        bytes32 id = custody.startWithdraw(user, token, amount, nonce);
+
+        // With threshold=1, initiator's approval automatically finalizes the withdrawal
+        _validateWithdrawalData(id, address(0), address(0), 0, true, 1, uint64(timestamp));
+        assertEq(
+            address(custody).balance,
+            custodyInitialBalance - amount,
+            "Custody balance should decrease by withdrawn amount"
+        );
+        assertEq(user.balance, amount, "User balance should increase by withdrawn amount");
+    }
+
+    function test_finalizes_ifThresholdIsOne_erc20() public {
+        // Deploy a new custody with threshold=1
+        custody = new ThresholdCustody(oneSigner, 1);
+        uint256 custodyInitialBalance = 2 ether;
+        token.mint(address(custody), custodyInitialBalance);
+
+        address token = address(token);
+        uint256 amount = 1 ether;
+        uint256 nonce = 1;
+        uint256 timestamp = block.timestamp;
+
+        vm.prank(signer1);
+        bytes32 id = custody.startWithdraw(user, token, amount, nonce);
+
+        // With threshold=1, initiator's approval automatically finalizes the withdrawal
+        _validateWithdrawalData(id, address(0), address(0), 0, true, 1, uint64(timestamp));
+        assertEq(
+            ERC20(token).balanceOf(address(custody)),
+            custodyInitialBalance - amount,
+            "Custody balance should decrease by withdrawn amount"
+        );
+        assertEq(ERC20(token).balanceOf(user), amount, "User balance should increase by withdrawn amount");
+    }
+
+    function test_finalizes_emitsEvent_withdrawalFinalized() public {
+        // Deploy a new custody with threshold=1
+        custody = new ThresholdCustody(oneSigner, 1);
+        uint256 custodyInitialBalance = 2 ether;
+        vm.deal(address(custody), custodyInitialBalance);
+
+        address token = address(0);
+        uint256 amount = 1 ether;
+        uint256 nonce = 1;
+
+        vm.prank(signer1);
+        vm.expectEmit(true, true, true, true);
+        bytes32 expectedId = Utils.getWithdrawalId(address(custody), user, token, amount, nonce);
+        emit IWithdraw.WithdrawFinalized(expectedId, true);
+        custody.startWithdraw(user, token, amount, nonce);
     }
 
     function test_revert_callerNotSigner() public {
@@ -1490,38 +1567,6 @@ contract ThresholdCustodyTest_FinalizeWithdraw is ThresholdCustodyTest_Base {
         }
     }
 
-    function test_success_1of1_eth() public {
-        address withdrawalToken = address(0);
-        uint64 expectedThreshold = 1;
-        uint64 startedAt = uint64(block.timestamp);
-        bytes32 id = _setUpTest(oneSigner, expectedThreshold, withdrawalToken, withdrawalAmount);
-
-        _validateInitialBalances(user, withdrawalToken);
-
-        vm.prank(signer1);
-        custody.finalizeWithdraw(id);
-
-        // user, token, amount are cleared; finalized=true, threshold and createdAt remain
-        _validateWithdrawalData(id, address(0), address(0), 0, true, expectedThreshold, startedAt);
-        _validateBalanceWithdrawn(user, withdrawalToken, withdrawalAmount);
-    }
-
-    function test_success_1of1_erc20() public {
-        address withdrawalToken = address(token);
-        uint64 expectedThreshold = 1;
-        uint64 startedAt = uint64(block.timestamp);
-        bytes32 id = _setUpTest(oneSigner, expectedThreshold, withdrawalToken, withdrawalAmount);
-
-        _validateInitialBalances(user, withdrawalToken);
-
-        vm.prank(signer1);
-        custody.finalizeWithdraw(id);
-
-        // user, token, amount are cleared; finalized=true, threshold and createdAt remain
-        _validateWithdrawalData(id, address(0), address(0), 0, true, expectedThreshold, startedAt);
-        _validateBalanceWithdrawn(user, withdrawalToken, withdrawalAmount);
-    }
-
     function test_success_2of2_eth() public {
         address withdrawalToken = address(0);
         uint64 expectedThreshold = 2;
@@ -1530,14 +1575,12 @@ contract ThresholdCustodyTest_FinalizeWithdraw is ThresholdCustodyTest_Base {
 
         _validateInitialBalances(user, withdrawalToken);
 
-        vm.warp(block.timestamp + 1 minutes);
-
-        vm.prank(signer1);
-        custody.finalizeWithdraw(id);
-
-        _validateInitialBalances(user, withdrawalToken);
+        // signer1 is already counted (1/2)
         _validateWithdrawalData(id, user, withdrawalToken, withdrawalAmount, false, expectedThreshold, startedAt);
 
+        vm.warp(block.timestamp + 1 minutes);
+
+        // signer2 approves to reach threshold (2/2)
         vm.prank(signer2);
         custody.finalizeWithdraw(id);
 
@@ -1553,23 +1596,22 @@ contract ThresholdCustodyTest_FinalizeWithdraw is ThresholdCustodyTest_Base {
         bytes32 id = _setUpTest(fiveSigners, expectedThreshold, withdrawalToken, withdrawalAmount);
 
         _validateInitialBalances(user, withdrawalToken);
-        vm.warp(block.timestamp + 1 minutes);
 
-        vm.prank(signer1);
-        custody.finalizeWithdraw(id);
-
-        _validateInitialBalances(user, withdrawalToken);
+        // signer1 is already counted (1/3)
         _validateWithdrawalData(id, user, withdrawalToken, withdrawalAmount, false, expectedThreshold, startedAt);
 
+        vm.warp(block.timestamp + 1 minutes);
+
+        // signer2 approves (2/3)
         vm.prank(signer2);
         custody.finalizeWithdraw(id);
 
         _validateInitialBalances(user, withdrawalToken);
-        vm.warp(block.timestamp + 1 minutes);
-
-        _validateInitialBalances(user, withdrawalToken);
         _validateWithdrawalData(id, user, withdrawalToken, withdrawalAmount, false, expectedThreshold, startedAt);
 
+        vm.warp(block.timestamp + 1 minutes);
+
+        // signer3 approves to reach threshold (3/3)
         vm.prank(signer3);
         custody.finalizeWithdraw(id);
 
@@ -1585,6 +1627,9 @@ contract ThresholdCustodyTest_FinalizeWithdraw is ThresholdCustodyTest_Base {
         uint64 startedAt = uint64(block.timestamp);
         bytes32 id = _setUpTest(twoSigners, expectedThreshold, withdrawalToken, withdrawalAmount);
 
+        // signer1 is already counted (1/2)
+        _validateWithdrawalData(id, user, withdrawalToken, withdrawalAmount, false, expectedThreshold, startedAt);
+
         // Lower threshold to 1 AFTER withdrawal was created
         uint64 newThreshold = 1;
         nonce = custody.signerNonce();
@@ -1598,14 +1643,11 @@ contract ThresholdCustodyTest_FinalizeWithdraw is ThresholdCustodyTest_Base {
 
         vm.warp(block.timestamp + 1 minutes);
 
-        // 1 approval should NOT suffice (snapshot quorum was 2)
-        vm.prank(signer1);
-        custody.finalizeWithdraw(id);
-
+        // 1 approval should NOT suffice (snapshot quorum was 2, and signer1 already approved)
         _validateInitialBalances(user, withdrawalToken);
         _validateWithdrawalData(id, user, withdrawalToken, withdrawalAmount, false, expectedThreshold, startedAt);
 
-        // 2nd approval should finalize the withdrawal
+        // signer2's approval should finalize the withdrawal (reaching 2/2)
         vm.prank(signer2);
         custody.finalizeWithdraw(id);
 
@@ -1617,11 +1659,6 @@ contract ThresholdCustodyTest_FinalizeWithdraw is ThresholdCustodyTest_Base {
     function test_success_eventsEmitted_2of2_eth() public {
         address token = address(0);
         bytes32 id = _setUpTest(twoSigners, 2, token, withdrawalAmount);
-
-        vm.expectEmit(true, true, true, true);
-        emit ThresholdCustody.WithdrawalApproved(id, signer1, 1);
-        vm.prank(signer1);
-        custody.finalizeWithdraw(id);
 
         vm.expectEmit(true, true, true, true);
         emit ThresholdCustody.WithdrawalApproved(id, signer2, 2);
@@ -1642,9 +1679,7 @@ contract ThresholdCustodyTest_FinalizeWithdraw is ThresholdCustodyTest_Base {
     function test_revert_duplicateApproval() public {
         bytes32 id = _setUpTest(twoSigners, 2, address(0), withdrawalAmount);
 
-        vm.prank(signer1);
-        custody.finalizeWithdraw(id);
-
+        // signer1 already approved during initiation, attempting to approve again should fail
         vm.prank(signer1);
         vm.expectRevert(ThresholdCustody.SignerAlreadyApproved.selector);
         custody.finalizeWithdraw(id);
@@ -1663,16 +1698,15 @@ contract ThresholdCustodyTest_FinalizeWithdraw is ThresholdCustodyTest_Base {
     function test_revert_alreadyFinalized() public {
         bytes32 id = _setUpTest(oneSigner, 1, address(0), withdrawalAmount);
 
-        vm.prank(signer1);
-        custody.finalizeWithdraw(id);
-
+        // With threshold=1, withdrawal is already finalized during initiation
+        // Attempting to finalize again should fail
         vm.prank(signer1);
         vm.expectRevert(IWithdraw.WithdrawalAlreadyFinalized.selector);
         custody.finalizeWithdraw(id);
     }
 
     function test_revert_afterReject() public {
-        bytes32 id = _setUpTest(oneSigner, 1, address(0), withdrawalAmount);
+        bytes32 id = _setUpTest(twoSigners, 2, address(0), withdrawalAmount);
 
         // Warp past expiry and reject
         vm.warp(block.timestamp + OPERATION_EXPIRY + 1);
@@ -1680,57 +1714,57 @@ contract ThresholdCustodyTest_FinalizeWithdraw is ThresholdCustodyTest_Base {
         custody.rejectWithdraw(id);
 
         // Try to finalize after rejection - should revert
-        vm.prank(signer1);
+        vm.prank(signer2);
         vm.expectRevert(IWithdraw.WithdrawalAlreadyFinalized.selector);
         custody.finalizeWithdraw(id);
     }
 
     function test_success_exactlyAtExpiryBoundary() public {
-        bytes32 id = _setUpTest(oneSigner, 1, address(0), withdrawalAmount);
+        bytes32 id = _setUpTest(twoSigners, 2, address(0), withdrawalAmount);
         uint64 createdAt = uint64(block.timestamp);
 
         // Warp to exactly createdAt + OPERATION_EXPIRY (should succeed)
         vm.warp(createdAt + OPERATION_EXPIRY);
 
-        vm.prank(signer1);
+        vm.prank(signer2);
         custody.finalizeWithdraw(id);
 
         // Verify withdrawal was executed successfully
-        _validateWithdrawalData(id, address(0), address(0), 0, true, 1, createdAt);
+        _validateWithdrawalData(id, address(0), address(0), 0, true, 2, createdAt);
         _validateBalanceWithdrawn(user, address(0), withdrawalAmount);
     }
 
     function test_revert_oneSecondAfterExpiry() public {
-        bytes32 id = _setUpTest(oneSigner, 1, address(0), withdrawalAmount);
+        bytes32 id = _setUpTest(twoSigners, 2, address(0), withdrawalAmount);
         uint64 createdAt = uint64(block.timestamp);
 
         // Warp to createdAt + OPERATION_EXPIRY + 1 (should revert)
         vm.warp(createdAt + OPERATION_EXPIRY + 1);
 
-        vm.prank(signer1);
+        // signer2 tries to approve but it's past expiry
+        vm.prank(signer2);
         vm.expectRevert(ThresholdCustody.DeadlineExpired.selector);
         custody.finalizeWithdraw(id);
     }
 
     function test_revert_insufficientEth() public {
-        bytes32 id = _setUpTest(oneSigner, 1, address(0), custodyNativeBalance + 1);
+        bytes32 id = _setUpTest(twoSigners, 2, address(0), custodyNativeBalance + 1);
 
-        vm.prank(signer1);
+        vm.prank(signer2);
         vm.expectRevert(IWithdraw.InsufficientLiquidity.selector);
         custody.finalizeWithdraw(id);
     }
 
     function test_revert_insufficientErc20() public {
-        vm.prank(signer1);
-        bytes32 id = _setUpTest(oneSigner, 1, address(token), custodyErc20Balance + 1);
+        bytes32 id = _setUpTest(twoSigners, 2, address(token), custodyErc20Balance + 1);
 
-        vm.prank(signer1);
+        vm.prank(signer2);
         vm.expectRevert(IWithdraw.InsufficientLiquidity.selector);
         custody.finalizeWithdraw(id);
     }
 
     function test_multipleConcurrentWithdrawals() public {
-        custody = new ThresholdCustody(oneSigner, 1);
+        custody = new ThresholdCustody(twoSigners, 2);
         vm.deal(address(custody), custodyNativeBalance);
 
         address withdrawalToken = address(0);
@@ -1741,50 +1775,52 @@ contract ThresholdCustodyTest_FinalizeWithdraw is ThresholdCustodyTest_Base {
         bytes32 id3 = custody.startWithdraw(user, withdrawalToken, withdrawalAmount, 3);
         vm.stopPrank();
 
-        vm.prank(signer1);
+        // not finalized yet
+        _validateWithdrawalData(id1, user, withdrawalToken, withdrawalAmount, false, 2, createdAt);
+        _validateWithdrawalData(id3, user, withdrawalToken, withdrawalAmount, false, 2, createdAt);
+
+        vm.startPrank(signer2);
         custody.finalizeWithdraw(id1);
-
-        _validateWithdrawalData(id1, address(0), address(0), 0, true, 1, createdAt);
-        _validateBalanceWithdrawn(user, address(0), withdrawalAmount);
-
-        // id2 left to expire
-
-        vm.prank(signer1);
         custody.finalizeWithdraw(id3);
+        vm.stopPrank();
 
-        _validateWithdrawalData(id3, address(0), address(0), 0, true, 1, createdAt);
         _validateBalanceWithdrawn(user, address(0), 2 * withdrawalAmount);
     }
 
     function test_removedSignerApprovalIgnored() public {
-        bytes32 id = _setUpTest(threeSigners, 2, address(0), withdrawalAmount);
+        bytes32 id = _setUpTest(fiveSigners, 3, address(0), withdrawalAmount);
 
         vm.prank(signer2);
         custody.finalizeWithdraw(id);
 
-        // Remove signer2 (need 2 sigs since threshold=2)
+        // Remove signer2 (need 3 sigs since threshold=3)
         address[] memory toRemove = new address[](1);
         toRemove[0] = signer2;
 
         nonce = custody.signerNonce();
-        bytes memory sig1 = _signRemoveSigners(signer1Pk, toRemove, 2, nonce, MAX_DEADLINE);
-        bytes memory sig2 = _signRemoveSigners(signer2Pk, toRemove, 2, nonce, MAX_DEADLINE);
-        bytes memory encodedSigs = _encodeMultiSig2(signer1, sig1, signer2, sig2);
+        bytes memory sig1 = _signRemoveSigners(signer1Pk, toRemove, 3, nonce, MAX_DEADLINE);
+        bytes memory sig2 = _signRemoveSigners(signer2Pk, toRemove, 3, nonce, MAX_DEADLINE);
+        bytes memory sig3 = _signRemoveSigners(signer3Pk, toRemove, 3, nonce, MAX_DEADLINE);
+        bytes memory encodedSigs = _encodeMultiSig3(signer1, sig1, signer2, sig2, signer3, sig3);
 
-        custody.removeSigners(toRemove, 2, MAX_DEADLINE, encodedSigs);
+        custody.removeSigners(toRemove, 3, MAX_DEADLINE, encodedSigs);
 
         assertFalse(custody.isSigner(signer2));
 
-        // signer1 approves — only 1 valid approval (signer2's no longer counts)
-        // snapshotted requiredQuorum is still 2, so not finalized yet
-        vm.prank(signer1);
-        custody.finalizeWithdraw(id);
-
+        // Only 1 valid approval now (signer1's; signer2's no longer counts)
+        // snapshotted requiredQuorum is still 3, so not finalized yet
         (,,, bool finalized,,) = custody.withdrawals(id);
         assertFalse(finalized);
 
-        // signer3 approves — now 2 valid approvals (signer1 + signer3), meets requiredQuorum=2
+        // signer3 approves — now 2 valid approvals (signer1 + signer3), still need 1 more
         vm.prank(signer3);
+        custody.finalizeWithdraw(id);
+
+        (,,, finalized,,) = custody.withdrawals(id);
+        assertFalse(finalized);
+
+        // signer4 approves — now 3 valid approvals (signer1 + signer3 + signer4), meets requiredQuorum=3
+        vm.prank(signer4);
         custody.finalizeWithdraw(id);
 
         (,,, finalized,,) = custody.withdrawals(id);
@@ -1826,9 +1862,9 @@ contract ThresholdCustodyTest_RejectWithdraw is ThresholdCustodyTest_Base {
 
     function test_success() public {
         address withdrawalToken = address(0);
-        uint64 expectedThreshold = 1;
+        uint64 expectedThreshold = 2;
         uint64 startedAt = uint64(block.timestamp);
-        bytes32 id = _setUpTest(oneSigner, expectedThreshold, withdrawalToken, withdrawalAmount);
+        bytes32 id = _setUpTest(twoSigners, expectedThreshold, withdrawalToken, withdrawalAmount);
 
         vm.warp(startedAt + OPERATION_EXPIRY + 1);
 
@@ -1841,7 +1877,7 @@ contract ThresholdCustodyTest_RejectWithdraw is ThresholdCustodyTest_Base {
     }
 
     function test_success_emitsEvent() public {
-        bytes32 id = _setUpTest(oneSigner, 1, address(0), withdrawalAmount);
+        bytes32 id = _setUpTest(twoSigners, 2, address(0), withdrawalAmount);
 
         vm.warp(block.timestamp + OPERATION_EXPIRY + 1);
 
@@ -1857,9 +1893,7 @@ contract ThresholdCustodyTest_RejectWithdraw is ThresholdCustodyTest_Base {
         uint64 startedAt = uint64(block.timestamp);
         bytes32 id = _setUpTest(twoSigners, expectedThreshold, withdrawalToken, withdrawalAmount);
 
-        // Get 1 approval (not enough to finalize)
-        vm.prank(signer1);
-        custody.finalizeWithdraw(id);
+        // signer1 initiated and is already counted (1/2, not enough to finalize)
 
         vm.warp(startedAt + OPERATION_EXPIRY + 1);
 
@@ -1875,7 +1909,7 @@ contract ThresholdCustodyTest_RejectWithdraw is ThresholdCustodyTest_Base {
     }
 
     function test_revert_notExpired() public {
-        bytes32 id = _setUpTest(oneSigner, 1, address(0), withdrawalAmount);
+        bytes32 id = _setUpTest(twoSigners, 2, address(0), withdrawalAmount);
 
         // do NOT warp past expiry
 
@@ -1885,7 +1919,7 @@ contract ThresholdCustodyTest_RejectWithdraw is ThresholdCustodyTest_Base {
     }
 
     function test_revert_notExpired_lastSecond() public {
-        bytes32 id = _setUpTest(oneSigner, 1, address(0), withdrawalAmount);
+        bytes32 id = _setUpTest(twoSigners, 2, address(0), withdrawalAmount);
 
         vm.warp(block.timestamp + OPERATION_EXPIRY);
 
@@ -1903,9 +1937,9 @@ contract ThresholdCustodyTest_RejectWithdraw is ThresholdCustodyTest_Base {
     }
 
     function test_revert_alreadyFinalized() public {
-        bytes32 id = _setUpTest(oneSigner, 1, address(0), withdrawalAmount);
+        bytes32 id = _setUpTest(twoSigners, 2, address(0), withdrawalAmount);
 
-        vm.prank(signer1);
+        vm.prank(signer2);
         custody.finalizeWithdraw(id);
 
         vm.warp(block.timestamp + OPERATION_EXPIRY);
@@ -1928,10 +1962,7 @@ contract ThresholdCustodyTest_RejectWithdraw is ThresholdCustodyTest_Base {
     function test_success_rejectWithPartialApprovals() public {
         bytes32 id = _setUpTest(threeSigners, 3, address(0), withdrawalAmount);
 
-        // Get 2 approvals (not enough to finalize)
-        vm.prank(signer1);
-        custody.finalizeWithdraw(id);
-
+        // Get 1 more approval from signer2 (2/3, not enough to finalize)
         vm.prank(signer2);
         custody.finalizeWithdraw(id);
 
@@ -2029,17 +2060,19 @@ contract ThresholdCustodyTest_ExecuteWithdrawal is ThresholdCustodyTest_Base {
     }
 
     function test_revert_eth_insufficientLiquidity() public {
-        bytes32 id = _createWithdrawal(address(0), custodyNativeBalance + 1);
-
+        // With threshold=1, withdrawal auto-executes during startWithdraw
+        // So InsufficientLiquidity will be thrown during _createWithdrawal
+        vm.prank(signer1);
         vm.expectRevert(IWithdraw.InsufficientLiquidity.selector);
-        testCustody.exposed_executeWithdrawal(id);
+        testCustody.startWithdraw(user, address(0), custodyNativeBalance + 1, 1);
     }
 
     function test_revert_erc20_insufficientLiquidity() public {
-        bytes32 id = _createWithdrawal(address(token), custodyErc20Balance + 1);
-
+        // With threshold=1, withdrawal auto-executes during startWithdraw
+        // So InsufficientLiquidity will be thrown during _createWithdrawal
+        vm.prank(signer1);
         vm.expectRevert(IWithdraw.InsufficientLiquidity.selector);
-        testCustody.exposed_executeWithdrawal(id);
+        testCustody.startWithdraw(user, address(token), custodyErc20Balance + 1, 1);
     }
 }
 
@@ -2087,8 +2120,9 @@ contract ThresholdCustodyTest_CountValidApprovals is ThresholdCustodyTest_Base {
     function test_zero_forNoApprovals() public {
         _setupCustody(threeSigners, 2);
 
+        // Initiator (signer1) is automatically counted as approved
         uint256 count = testCustody.exposed_countValidApprovals(withdrawalId);
-        assertEq(count, 0);
+        assertEq(count, 1);
     }
 
     function test_1_for1Approval() public {

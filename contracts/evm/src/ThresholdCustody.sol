@@ -147,16 +147,30 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
         bytes32 withdrawalId = Utils.getWithdrawalId(address(this), user, token, amount, nonce);
         require(withdrawals[withdrawalId].createdAt == 0, IWithdraw.WithdrawalAlreadyExists());
 
+        uint64 requiredThreshold = threshold();
+
         withdrawals[withdrawalId] = WithdrawalRequest({
             user: user,
             token: token,
             amount: amount,
             finalized: false,
-            requiredThreshold: threshold(),
+            requiredThreshold: requiredThreshold,
             createdAt: uint64(block.timestamp)
         });
 
         emit WithdrawStarted(withdrawalId, user, token, amount, nonce);
+
+        // Count the initiator as having approved the withdrawal
+        address initiator = msg.sender;
+        withdrawalApprovals[withdrawalId][initiator] = true;
+        emit WithdrawalApproved(withdrawalId, initiator, 1);
+
+        // Check if threshold is already met (e.g., threshold = 1)
+        if (requiredThreshold == 1) {
+            _executeWithdrawal(withdrawals[withdrawalId]);
+            emit WithdrawFinalized(withdrawalId, true);
+        }
+
         return withdrawalId;
     }
 
