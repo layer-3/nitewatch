@@ -992,6 +992,37 @@ contract ThresholdCustodyTest_RemoveSigners is ThresholdCustodyTest_Base {
         _checkStats(2, newThreshold, ++nonce);
     }
 
+    function test_success_removeSigners_reducingBelowCurrentThreshold() public {
+        address[] memory fourSigners = new address[](4);
+        fourSigners[0] = signer1;
+        fourSigners[1] = signer2;
+        fourSigners[2] = signer3;
+        fourSigners[3] = signer4;
+
+        // Start with 4 signers and threshold of 3
+        custody = new ThresholdCustody(fourSigners, 3);
+
+        // Remove 2 signers (leaving 2 signers) and set threshold to 1
+        address[] memory signersToRemove = new address[](2);
+        signersToRemove[0] = signer3;
+        signersToRemove[1] = signer4;
+
+        uint64 newThreshold = 1;
+        uint256 nonce = custody.signerNonce();
+        bytes memory sig1 = _signRemoveSigners(signer1Pk, signersToRemove, newThreshold, nonce, MAX_DEADLINE);
+        bytes memory sig2 = _signRemoveSigners(signer2Pk, signersToRemove, newThreshold, nonce, MAX_DEADLINE);
+        bytes memory sig3 = _signRemoveSigners(signer3Pk, signersToRemove, newThreshold, nonce, MAX_DEADLINE);
+        bytes memory encodedSigs = _encodeMultiSig3(signer1, sig1, signer2, sig2, signer3, sig3);
+
+        custody.removeSigners(signersToRemove, newThreshold, MAX_DEADLINE, encodedSigs);
+
+        assertTrue(custody.isSigner(signer1));
+        assertTrue(custody.isSigner(signer2));
+        assertFalse(custody.isSigner(signer3));
+        assertFalse(custody.isSigner(signer4));
+        _checkStats(2, newThreshold, ++nonce);
+    }
+
     function test_revert_emptySignatures() public {
         custody = new ThresholdCustody(twoSigners, 1);
         address[] memory signersToRemove = new address[](1);
@@ -1155,7 +1186,7 @@ contract ThresholdCustodyTest_RemoveSigners is ThresholdCustodyTest_Base {
         bytes memory encodedSigs = _encodeMultiSig2(signer1, sig1, signer2, sig2);
 
         vm.expectRevert(
-            abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913UnreachableThreshold.selector, 0, 2)
+            abi.encodeWithSelector(MultiSignerERC7913.MultiSignerERC7913UnreachableThreshold.selector, 0, 1)
         );
         custody.removeSigners(signersToRemove, newThreshold, MAX_DEADLINE, encodedSigs);
     }

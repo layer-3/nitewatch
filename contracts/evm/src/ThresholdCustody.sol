@@ -118,8 +118,8 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
 
         signerNonce++;
 
-        _removeSigners(signersToRemove.toAddressBytesArray());
         _setThreshold(newThreshold);
+        _removeSigners(signersToRemove.toAddressBytesArray());
     }
 
     function deposit(address token, uint256 amount) external payable override nonReentrant {
