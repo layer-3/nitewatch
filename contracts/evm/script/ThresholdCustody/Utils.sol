@@ -5,6 +5,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {console} from "forge-std/console.sol";
 
 import {MessageHashUtils} from "openzeppelin-contracts/contracts/utils/cryptography/MessageHashUtils.sol";
+import {ECDSA} from "openzeppelin-contracts/contracts/utils/cryptography/ECDSA.sol";
 
 import {ADD_SIGNERS_TYPEHASH, REMOVE_SIGNERS_TYPEHASH, SET_THRESHOLD_TYPEHASH, NAME, VERSION, ThresholdCustody} from "../../src/ThresholdCustody.sol";
 import {Utils as ContractUtils} from "../../src/Utils.sol";
@@ -69,28 +70,41 @@ library ThresholdCustodyScriptUtils {
     /// @notice Validate that threshold can be reached with the given number of signers
     function validateThreshold(uint64 threshold, uint256 signerCount) internal pure {
         require(threshold <= signerCount, InsufficientThreshold(threshold, signerCount));
-
-        console.log("insufficient threshold: ", threshold, " can not be reached with ");
-        console.log(signerCount, " signers");
     }
 
-    /// @notice Concatenate an array of signatures into a single bytes
-    function concatenateSignatures(bytes[] memory sigArray) internal pure returns (bytes memory) {
-        bytes memory signatures = "";
+    /// @notice Encode signatures in MultiSignerERC7913 format
+    /// @dev Recovers signer addresses from signatures and encodes them with the signatures
+    function encodeMultiSignerSignatures(bytes32 digest, bytes[] memory sigArray)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        // Recover signer addresses from signatures
+        address[] memory signerAddrs = new address[](sigArray.length);
         for (uint256 i = 0; i < sigArray.length; i++) {
-            signatures = bytes.concat(signatures, sigArray[i]);
+            signerAddrs[i] = ECDSA.recover(digest, sigArray[i]);
         }
-        return signatures;
+
+        // Encode signers as bytes[]
+        bytes[] memory signers = new bytes[](signerAddrs.length);
+        for (uint256 i = 0; i < signerAddrs.length; i++) {
+            signers[i] = abi.encodePacked(signerAddrs[i]);
+        }
+
+        return abi.encode(signers, sigArray);
     }
 
     /// @notice Get threshold from env or use current threshold from contract
     function getThreshold(Vm vm, string memory thresholdEnvName, ThresholdCustody custody) internal view returns (uint64) {
-        try vm.envUint(thresholdEnvName) returns (uint256 envThreshold) {
-            return uint64(envThreshold);
-        } catch {
+        // Use envOr with 0 as default - if 0, use current threshold from contract
+        uint256 envThreshold = vm.envOr(thresholdEnvName, uint256(0));
+
+        if (envThreshold == 0) {
             uint64 currentThreshold = custody.threshold();
-            console.log(thresholdEnvName, " env not specified, using existing threshold:", currentThreshold);
+            console.log(thresholdEnvName, " env not specified or zero, using existing threshold:", currentThreshold);
             return currentThreshold;
         }
+
+        return uint64(envThreshold);
     }
 }

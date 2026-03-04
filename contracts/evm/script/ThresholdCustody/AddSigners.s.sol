@@ -38,9 +38,15 @@ contract AddSigners is Script {
         // Validate threshold
         Utils.validateThreshold(newThreshold, resultingSignerCount);
 
-        // Get signatures and concatenate them
+        // Get signatures and encode them in MultiSignerERC7913 format
         bytes[] memory sigArray = vm.envBytes("SIGNATURES", ",");
-        bytes memory signatures = Utils.concatenateSignatures(sigArray);
+
+        // Build digest to recover signer addresses
+        bytes32 domainSeparator = Utils.getDomainSeparator(contractAddr);
+        bytes32 structHash = Utils.getAddSignersStructHash(newSigners, newThreshold, custody.signerNonce(), deadline);
+        bytes32 digest = Utils.getTypedDataHash(domainSeparator, structHash);
+
+        bytes memory signatures = Utils.encodeMultiSignerSignatures(digest, sigArray);
 
         console.log("Contract:", contractAddr);
         console.log("Adding %d signer(s), new threshold: %d", newSigners.length, newThreshold);

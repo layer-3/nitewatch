@@ -18,7 +18,7 @@ import {ThresholdCustodyScriptUtils as Utils} from "./Utils.sol";
 ///   SIGNER_PK=0xabc... CONTRACT=0x... SIGNERS_TO_REMOVE=0xA,0xB NEW_THRESHOLD=2 DEADLINE=1999999999 \
 ///     forge script script/ThresholdCustody/SignRemoveSigners.s.sol --rpc-url $RPC_URL
 contract SignRemoveSigners is Script {
-    function run() public view {
+    function run() public view returns (bytes memory) {
         uint256 signerKey = vm.envUint("SIGNER_PK");
         address contractAddr = vm.envAddress("CONTRACT");
         address[] memory signersToRemove = vm.envAddress("SIGNERS_TO_REMOVE", ",");
@@ -50,5 +50,7 @@ contract SignRemoveSigners is Script {
         console.log("Resulting signer count:", resultingSignerCount);
         console.log("Signature:");
         console.logBytes(signature);
+
+        return signature;
     }
 }
