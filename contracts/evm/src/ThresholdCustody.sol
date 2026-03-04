@@ -11,12 +11,11 @@ import {IWithdraw} from "./interfaces/IWithdraw.sol";
 import {IDeposit} from "./interfaces/IDeposit.sol";
 import {Utils} from "./Utils.sol";
 
-bytes32 constant SET_THRESHOLD_TYPEHASH =
-    keccak256("SetThreshold(uint256 newThreshold,uint256 nonce,uint256 deadline)");
+bytes32 constant SET_THRESHOLD_TYPEHASH = keccak256("SetThreshold(uint64 newThreshold,uint256 nonce,uint256 deadline)");
 bytes32 constant ADD_SIGNERS_TYPEHASH =
-    keccak256("AddSigners(address[] newSigners,uint256 newThreshold,uint256 nonce,uint256 deadline)");
+    keccak256("AddSigners(address[] newSigners,uint64 newThreshold,uint256 nonce,uint256 deadline)");
 bytes32 constant REMOVE_SIGNERS_TYPEHASH =
-    keccak256("RemoveSigners(address[] signersToRemove,uint256 newThreshold,uint256 nonce,uint256 deadline)");
+    keccak256("RemoveSigners(address[] signersToRemove,uint64 newThreshold,uint256 nonce,uint256 deadline)");
 
 string constant NAME = "ThresholdCustody";
 string constant VERSION = "1.0.0";
