@@ -199,8 +199,13 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
         address token = request.token;
         uint256 amount = request.amount;
 
+        // effects
+        request.user = address(0);
+        request.token = address(0);
+        request.amount = 0;
         request.finalized = true;
 
+        // interactions
         if (token == address(0)) {
             require(address(this).balance >= amount, IWithdraw.InsufficientLiquidity());
             (bool success,) = user.call{value: amount}("");
@@ -209,10 +214,6 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
             require(IERC20(token).balanceOf(address(this)) >= amount, IWithdraw.InsufficientLiquidity());
             IERC20(token).safeTransfer(user, amount);
         }
-
-        request.user = address(0);
-        request.token = address(0);
-        request.amount = 0;
     }
 
     function _countValidApprovals(bytes32 withdrawalId) internal view returns (uint256 count) {
