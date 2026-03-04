@@ -6,7 +6,14 @@ pragma solidity ^0.8.24;
 //   forge test --match-contract ThresholdCustodyScriptsTest --threads 1
 
 import {Test, console} from "forge-std/Test.sol";
-import {ThresholdCustody, NAME, VERSION, ADD_SIGNERS_TYPEHASH, REMOVE_SIGNERS_TYPEHASH, SET_THRESHOLD_TYPEHASH} from "../src/ThresholdCustody.sol";
+import {
+    ThresholdCustody,
+    NAME,
+    VERSION,
+    ADD_SIGNERS_TYPEHASH,
+    REMOVE_SIGNERS_TYPEHASH,
+    SET_THRESHOLD_TYPEHASH
+} from "../src/ThresholdCustody.sol";
 import {Utils} from "../src/Utils.sol";
 import {ThresholdCustodyScriptUtils} from "../script/ThresholdCustody/Utils.sol";
 

@@ -7,7 +7,14 @@ import {console} from "forge-std/console.sol";
 import {MessageHashUtils} from "openzeppelin-contracts/contracts/utils/cryptography/MessageHashUtils.sol";
 import {ECDSA} from "openzeppelin-contracts/contracts/utils/cryptography/ECDSA.sol";
 
-import {ADD_SIGNERS_TYPEHASH, REMOVE_SIGNERS_TYPEHASH, SET_THRESHOLD_TYPEHASH, NAME, VERSION, ThresholdCustody} from "../../src/ThresholdCustody.sol";
+import {
+    ADD_SIGNERS_TYPEHASH,
+    REMOVE_SIGNERS_TYPEHASH,
+    SET_THRESHOLD_TYPEHASH,
+    NAME,
+    VERSION,
+    ThresholdCustody
+} from "../../src/ThresholdCustody.sol";
 import {Utils as ContractUtils} from "../../src/Utils.sol";
 
 library ThresholdCustodyScriptUtils {
@@ -21,7 +28,12 @@ library ThresholdCustodyScriptUtils {
     /// @notice Calculate the EIP-712 domain separator for ThresholdCustody
     function getDomainSeparator(address contractAddr) internal view returns (bytes32) {
         return MessageHashUtils.toDomainSeparator(
-            DOMAIN_FIELDS, NAME, VERSION, block.chainid, contractAddr, bytes32(0) // salt not used
+            DOMAIN_FIELDS,
+            NAME,
+            VERSION,
+            block.chainid,
+            contractAddr,
+            bytes32(0) // salt not used
         );
     }
 
@@ -31,12 +43,11 @@ library ThresholdCustodyScriptUtils {
     }
 
     /// @notice Build struct hash for addSigners operation
-    function getAddSignersStructHash(
-        address[] memory newSigners,
-        uint64 newThreshold,
-        uint256 nonce,
-        uint256 deadline
-    ) internal pure returns (bytes32) {
+    function getAddSignersStructHash(address[] memory newSigners, uint64 newThreshold, uint256 nonce, uint256 deadline)
+        internal
+        pure
+        returns (bytes32)
+    {
         return keccak256(abi.encode(ADD_SIGNERS_TYPEHASH, newSigners.hashArrayed(), newThreshold, nonce, deadline));
     }
 
@@ -74,11 +85,7 @@ library ThresholdCustodyScriptUtils {
 
     /// @notice Encode signatures in MultiSignerERC7913 format
     /// @dev Recovers signer addresses from signatures and encodes them with the signatures
-    function encodeMultiSignerSignatures(bytes32 digest, bytes[] memory sigArray)
-        internal
-        pure
-        returns (bytes memory)
-    {
+    function encodeMultiSignerSignatures(bytes32 digest, bytes[] memory sigArray) internal pure returns (bytes memory) {
         // Recover signer addresses from signatures
         address[] memory signerAddrs = new address[](sigArray.length);
         for (uint256 i = 0; i < sigArray.length; i++) {
@@ -95,7 +102,11 @@ library ThresholdCustodyScriptUtils {
     }
 
     /// @notice Get threshold from env or use current threshold from contract
-    function getThreshold(Vm vm, string memory thresholdEnvName, ThresholdCustody custody) internal view returns (uint64) {
+    function getThreshold(Vm vm, string memory thresholdEnvName, ThresholdCustody custody)
+        internal
+        view
+        returns (uint64)
+    {
         // Use envOr with 0 as default - if 0, use current threshold from contract
         uint256 envThreshold = vm.envOr(thresholdEnvName, uint256(0));
 
