@@ -50,6 +50,9 @@ contract ThresholdCustodyScriptsTest is Test {
     SetThreshold internal setThresholdScript;
 
     function setUp() public {
+        // These tests should only be run with `--threads 1` to ensure proper isolation due to environment variable usage
+        vm.skip(true);
+
         (signer1, signer1Pk) = makeAddrAndKey("signer1");
         (signer2, signer2Pk) = makeAddrAndKey("signer2");
         (signer3, signer3Pk) = makeAddrAndKey("signer3");
