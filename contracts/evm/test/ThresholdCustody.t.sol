@@ -1449,7 +1449,11 @@ contract ThresholdCustodyTest_StartWithdraw is ThresholdCustodyTest_Base {
 
         // With threshold=1, initiator's approval automatically finalizes the withdrawal
         _validateWithdrawalData(id, address(0), address(0), 0, true, 1, uint64(timestamp));
-        assertEq(address(custody).balance, custodyInitialBalance - amount, "Custody balance should decrease by withdrawn amount");
+        assertEq(
+            address(custody).balance,
+            custodyInitialBalance - amount,
+            "Custody balance should decrease by withdrawn amount"
+        );
         assertEq(user.balance, amount, "User balance should increase by withdrawn amount");
     }
 
@@ -1469,7 +1473,11 @@ contract ThresholdCustodyTest_StartWithdraw is ThresholdCustodyTest_Base {
 
         // With threshold=1, initiator's approval automatically finalizes the withdrawal
         _validateWithdrawalData(id, address(0), address(0), 0, true, 1, uint64(timestamp));
-        assertEq(ERC20(token).balanceOf(address(custody)), custodyInitialBalance - amount, "Custody balance should decrease by withdrawn amount");
+        assertEq(
+            ERC20(token).balanceOf(address(custody)),
+            custodyInitialBalance - amount,
+            "Custody balance should decrease by withdrawn amount"
+        );
         assertEq(ERC20(token).balanceOf(user), amount, "User balance should increase by withdrawn amount");
     }
 
