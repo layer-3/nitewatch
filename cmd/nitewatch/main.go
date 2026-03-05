@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
+	"syscall"
+
+	"golang.org/x/term"
 
 	"github.com/layer-3/nitewatch/config"
 	"github.com/layer-3/nitewatch/service"
@@ -19,6 +23,21 @@ func main() {
 	if err != nil {
 		slog.Error("Failed to load configuration", "error", err)
 		os.Exit(1)
+	}
+
+	if conf.Blockchain.PrivateKey == "" {
+		fmt.Print("Enter private key: ")
+		bytePassword, err := term.ReadPassword(int(syscall.Stdin))
+		if err != nil {
+			slog.Error("Failed to read private key", "error", err)
+			os.Exit(1)
+		}
+		fmt.Println() // Print newline after input
+		conf.Blockchain.PrivateKey = strings.TrimSpace(string(bytePassword))
+		if conf.Blockchain.PrivateKey == "" {
+			slog.Error("Private key cannot be empty")
+			os.Exit(1)
+		}
 	}
 
 	svc, err := service.New(*conf)
