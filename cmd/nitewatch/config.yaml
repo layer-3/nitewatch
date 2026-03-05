@@ -2,6 +2,7 @@ blockchain:
   rpc_url: "${NITEWATCH_RPC_URL}"
   contract_address: "${NITEWATCH_CONTRACT_ADDRESS}"
   private_key: "${NITEWATCH_PRIVATE_KEY}"
+  start_block: 24593000
 
 limits:
   # Native ETH (zero address)

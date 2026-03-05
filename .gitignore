@@ -4,3 +4,6 @@ custody/*.bin
 
 # SQLite database (docker-compose bind mount)
 data/
+config.yaml
+nitewatch
+nitewatch.sqlite

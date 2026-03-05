@@ -23,6 +23,7 @@ type BlockchainConfig struct {
 	RPCURL       string `yaml:"rpc_url"`
 	ContractAddr string `yaml:"contract_address"`
 	PrivateKey   string `yaml:"private_key"`
+	StartBlock   uint64 `yaml:"start_block"`
 }
 
 // LimitsConfig maps token contract addresses to their withdrawal rate limits.
@@ -82,9 +83,6 @@ func (c BlockchainConfig) Validate() error {
 	}
 	if !common.IsHexAddress(c.ContractAddr) {
 		return fmt.Errorf("invalid contract address: %s", c.ContractAddr)
-	}
-	if c.PrivateKey == "" {
-		return errors.New("missing private key")
 	}
 	return nil
 }

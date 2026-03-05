@@ -167,7 +167,12 @@ func (svc *Service) RunWorkerWithContext(ctx context.Context) error {
 		fromBlock, fromLogIdx, err := svc.store.GetCursor("withdraw_started")
 		if err != nil {
 			svc.Logger.Warn("Failed to read withdraw_started cursor, starting from head", "error", err)
+			// If cursor is missing, we default to 0. But if StartBlock is configured, we should use that.
 		}
+		if fromBlock == 0 && svc.Config.Blockchain.StartBlock > 0 {
+			fromBlock = svc.Config.Blockchain.StartBlock
+		}
+
 		svc.Logger.Info("Starting WithdrawStarted event watcher", "from_block", fromBlock, "from_log_index", fromLogIdx)
 		withdrawals := make(chan *custody.WithdrawStartedEvent)
 		go svc.listener.WatchWithdrawStarted(ctx, withdrawals, fromBlock, fromLogIdx)
