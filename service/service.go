@@ -125,7 +125,7 @@ func NewWithBackend(conf config.Config, client custody.EthBackend) (*Service, er
 		return nil, fmt.Errorf("failed to bind IWithdraw contract: %w", err)
 	}
 
-	listener := custody.NewListener(client, addr, withdrawContract, nil)
+	listener := custody.NewListener(client, addr, withdrawContract, nil, conf.Blockchain.ConfirmationBlocks)
 
 	return &Service{
 		Config:    conf,
@@ -217,7 +217,7 @@ func (svc *Service) RunWorkerWithContext(ctx context.Context) error {
 					}
 				}
 				svc.contract = withdrawContract
-				svc.listener = custody.NewListener(newClient, addr, withdrawContract, nil)
+				svc.listener = custody.NewListener(newClient, addr, withdrawContract, nil, svc.Config.Blockchain.ConfirmationBlocks)
 			}
 			firstRun = false
 

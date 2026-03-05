@@ -20,10 +20,11 @@ type Config struct {
 }
 
 type BlockchainConfig struct {
-	RPCURL       string `yaml:"rpc_url"`
-	ContractAddr string `yaml:"contract_address"`
-	PrivateKey   string `yaml:"private_key"`
-	StartBlock   uint64 `yaml:"start_block"`
+	RPCURL             string `yaml:"rpc_url"`
+	ContractAddr       string `yaml:"contract_address"`
+	PrivateKey         string `yaml:"private_key"`
+	StartBlock         uint64 `yaml:"start_block"`
+	ConfirmationBlocks uint64 `yaml:"confirmation_blocks"`
 }
 
 // LimitsConfig maps token contract addresses to their withdrawal rate limits.

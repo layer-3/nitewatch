@@ -18,6 +18,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient/simulated"
+	"github.com/ethereum/go-ethereum/event"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -98,13 +99,47 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 }
 
-// simBackendClient wraps simulated.Client to add Close(), satisfying custody.EthBackend.
+// simBackendClient wraps simulated.Client to add Close() and SubscribeNewHead, satisfying custody.EthBackend.
 type simBackendClient struct {
 	simulated.Client
 	backend *simulated.Backend
 }
 
 func (c simBackendClient) Close() { c.backend.Close() }
+
+func (c simBackendClient) SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (event.Subscription, error) {
+	// Create a subscription that polls for new blocks
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		var lastBlock uint64
+		for {
+			select {
+			case <-ticker.C:
+				header, err := c.backend.Client().HeaderByNumber(ctx, nil)
+				if err != nil {
+					continue
+				}
+				if header.Number.Uint64() > lastBlock {
+					lastBlock = header.Number.Uint64()
+					// Check if channel is closed or full?
+					// Ideally we should select on quit as well while sending
+					select {
+					case ch <- header:
+					case <-quit:
+						return nil
+					case <-ctx.Done():
+						return nil
+					}
+				}
+			case <-quit:
+				return nil
+			case <-ctx.Done():
+				return nil
+			}
+		}
+	}), nil
+}
 
 // autoCommit mines blocks periodically so that bind.WaitMined can return.
 func autoCommit(ctx context.Context, sim *simulated.Backend, interval time.Duration) {

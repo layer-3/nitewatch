@@ -28,10 +28,11 @@ const (
 
 // Listener handles monitoring the blockchain for events from the custody contract.
 type Listener struct {
-	client           bind.ContractBackend
-	contractAddr     common.Address
-	withdrawFilterer *IWithdrawFilterer
-	depositFilterer  *IDepositFilterer
+	client             bind.ContractBackend
+	contractAddr       common.Address
+	withdrawFilterer   *IWithdrawFilterer
+	depositFilterer    *IDepositFilterer
+	confirmationBlocks uint64
 }
 
 // NewListener creates a new Listener instance.
@@ -39,10 +40,11 @@ type Listener struct {
 // contractAddr: address of the custody contract
 // withdraw: bound IWithdraw contract instance
 // deposit: bound IDeposit contract instance (can be nil if deposit events are not needed)
-func NewListener(client bind.ContractBackend, contractAddr common.Address, withdraw *IWithdraw, deposit *IDeposit) *Listener {
+func NewListener(client bind.ContractBackend, contractAddr common.Address, withdraw *IWithdraw, deposit *IDeposit, confirmationBlocks uint64) *Listener {
 	l := &Listener{
-		client:       client,
-		contractAddr: contractAddr,
+		client:             client,
+		contractAddr:       contractAddr,
+		confirmationBlocks: confirmationBlocks,
 	}
 	if withdraw != nil {
 		l.withdrawFilterer = &withdraw.IWithdrawFilterer
@@ -67,7 +69,7 @@ func (l *Listener) WatchWithdrawStarted(ctx context.Context, sink chan<- *Withdr
 	}
 	topic := parsedABI.Events["WithdrawStarted"].ID
 
-	listenEvents(ctx, l.client, "withdraw-started", l.contractAddr, 0, fromBlock, fromLogIndex,
+	listenEvents(ctx, l.client, "withdraw-started", l.contractAddr, 0, fromBlock, fromLogIndex, l.confirmationBlocks,
 		[][]common.Hash{{topic}},
 		func(log types.Log) {
 
@@ -100,7 +102,7 @@ func (l *Listener) WatchWithdrawFinalized(ctx context.Context, sink chan<- *With
 	}
 	topic := parsedABI.Events["WithdrawFinalized"].ID
 
-	listenEvents(ctx, l.client, "withdraw-finalized", l.contractAddr, 0, fromBlock, fromLogIndex,
+	listenEvents(ctx, l.client, "withdraw-finalized", l.contractAddr, 0, fromBlock, fromLogIndex, l.confirmationBlocks,
 		[][]common.Hash{{topic}},
 		func(log types.Log) {
 
@@ -134,7 +136,7 @@ func (l *Listener) WatchDeposited(ctx context.Context, sink chan<- *DepositedEve
 	}
 	topic := parsedABI.Events["Deposited"].ID
 
-	listenEvents(ctx, l.client, "deposited", l.contractAddr, 0, fromBlock, fromLogIndex,
+	listenEvents(ctx, l.client, "deposited", l.contractAddr, 0, fromBlock, fromLogIndex, l.confirmationBlocks,
 		[][]common.Hash{{topic}},
 		func(log types.Log) {
 
@@ -166,6 +168,7 @@ func listenEvents(
 	networkID uint32,
 	lastBlock uint64,
 	lastIndex uint32,
+	confirmationBlocks uint64,
 	topics [][]common.Hash,
 	handler logHandler,
 ) {
@@ -178,7 +181,7 @@ func listenEvents(
 		SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (ethereum.Subscription, error)
 	}
 
-	listenerLogger.Debugw("starting listening events", "subID", subID, "contractAddress", contractAddress.String())
+	listenerLogger.Debugw("starting listening events", "subID", subID, "contractAddress", contractAddress.String(), "confirmationBlocks", confirmationBlocks)
 	for {
 		if err := ctx.Err(); err != nil {
 			listenerLogger.Infow("context cancelled, stopping listener", "subID", subID)
@@ -233,7 +236,10 @@ func listenEvents(
 			}
 
 			currentHead := header.Number.Uint64()
-			targetBlock := currentHead
+			targetBlock := uint64(0)
+			if currentHead > confirmationBlocks {
+				targetBlock = currentHead - confirmationBlocks
+			}
 
 			if targetBlock > lastBlock {
 				reconcileBlockRange(
@@ -260,7 +266,10 @@ func listenEvents(
 			return
 		case header := <-headCh:
 			currentHead := header.Number.Uint64()
-			targetBlock := currentHead
+			targetBlock := uint64(0)
+			if currentHead > confirmationBlocks {
+				targetBlock = currentHead - confirmationBlocks
+			}
 
 			if targetBlock > lastBlock {
 				reconcileBlockRange(
@@ -306,9 +315,14 @@ func reconcileBlockRange(
 	var backOffCount atomic.Uint64
 	const blockStep = 10000
 	startBlock := lastBlock
+	if startBlock == 0 {
+		// If lastBlock is 0, we start from block 0 (or whatever the network supports)
+		// but since we want to be safe, we just use startBlock as is.
+	}
+
 	endBlock := startBlock + blockStep
 
-	for currentBlock > startBlock {
+	for currentBlock >= startBlock {
 		if ctx.Err() != nil {
 			return
 		}
@@ -353,7 +367,7 @@ func reconcileBlockRange(
 			listenerLogger.Infow("retrying with advised block range", "subID", subID, "startBlock", startBlock, "endBlock", endBlock)
 			continue
 		}
-		listenerLogger.Infow("fetched historical logs", "subID", subID, "count", len(logs), "startBlock", startBlock, "endBlock", endBlock)
+		listenerLogger.Infow("fetched logs", "subID", subID, "count", len(logs), "startBlock", startBlock, "endBlock", endBlock)
 
 		for _, ethLog := range logs {
 			if ethLog.BlockNumber == lastBlock && ethLog.Index <= uint(lastIndex) {
