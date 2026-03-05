@@ -359,6 +359,21 @@ func reconcileBlockRange(
 
 			newStartBlock, newEndBlock, extractErr := extractAdvisedBlockRange(err.Error())
 			if extractErr != nil {
+				// If we can't extract advice, and the range is larger than 1 block, try to halve it.
+				// This handles generic "internal error" or timeouts from RPC providers.
+				if endBlock > startBlock {
+					newEnd := endBlock - (endBlock-startBlock)/2
+					// Ensure we actually reduce the range (integer division might result in 0 reduction if diff is 1)
+					if newEnd == endBlock {
+						newEnd = endBlock - 1
+					}
+					if newEnd >= startBlock {
+						listenerLogger.Warnw("failed to filter logs and extract advice, halving block range", "error", err, "subID", subID, "startBlock", startBlock, "oldEndBlock", endBlock, "newEndBlock", newEnd)
+						endBlock = newEnd
+						continue
+					}
+				}
+
 				listenerLogger.Errorw("failed to filter logs", "error", err, "extractErr", extractErr, "subID", subID, "startBlock", startBlock, "endBlock", endBlock)
 				backOffCount.Add(1)
 				continue

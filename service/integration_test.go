@@ -107,7 +107,7 @@ type simBackendClient struct {
 
 func (c simBackendClient) Close() { c.backend.Close() }
 
-func (c simBackendClient) SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (event.Subscription, error) {
+func (c simBackendClient) SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (ethereum.Subscription, error) {
 	// Create a subscription that polls for new blocks
 	return event.NewSubscription(func(quit <-chan struct{}) error {
 		ticker := time.NewTicker(50 * time.Millisecond)
