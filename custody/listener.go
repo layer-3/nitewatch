@@ -70,6 +70,7 @@ func (l *Listener) WatchWithdrawStarted(ctx context.Context, sink chan<- *Withdr
 	listenEvents(ctx, l.client, "withdraw-started", l.contractAddr, 0, fromBlock, fromLogIndex,
 		[][]common.Hash{{topic}},
 		func(log types.Log) {
+
 			ev, err := l.withdrawFilterer.ParseWithdrawStarted(log)
 			if err != nil {
 				return
@@ -102,6 +103,7 @@ func (l *Listener) WatchWithdrawFinalized(ctx context.Context, sink chan<- *With
 	listenEvents(ctx, l.client, "withdraw-finalized", l.contractAddr, 0, fromBlock, fromLogIndex,
 		[][]common.Hash{{topic}},
 		func(log types.Log) {
+
 			ev, err := l.withdrawFilterer.ParseWithdrawFinalized(log)
 			if err != nil {
 				return
@@ -135,6 +137,7 @@ func (l *Listener) WatchDeposited(ctx context.Context, sink chan<- *DepositedEve
 	listenEvents(ctx, l.client, "deposited", l.contractAddr, 0, fromBlock, fromLogIndex,
 		[][]common.Hash{{topic}},
 		func(log types.Log) {
+
 			ev, err := l.depositFilterer.ParseDeposited(log)
 			if err != nil {
 				return
@@ -167,8 +170,13 @@ func listenEvents(
 	handler logHandler,
 ) {
 	var backOffCount atomic.Uint64
-	var historicalCh, currentCh chan types.Log
 	var eventSubscription event.Subscription
+	var headCh chan *types.Header
+
+	// Interface for SubscribeNewHead, as it's not in bind.ContractBackend
+	type headerSubscriber interface {
+		SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (ethereum.Subscription, error)
+	}
 
 	listenerLogger.Debugw("starting listening events", "subID", subID, "contractAddress", contractAddress.String())
 	for {
@@ -185,59 +193,64 @@ func listenEvents(
 				return
 			}
 
-			historicalCh = make(chan types.Log, 1)
-			currentCh = make(chan types.Log, 100)
+			// Channel for new block headers
+			headCh = make(chan *types.Header, 100)
 
-			if lastBlock == 0 {
-				listenerLogger.Infow("skipping historical logs fetching", "subID", subID, "contractAddress", contractAddress.String())
-			} else {
-				var header *types.Header
-				var err error
-				headerCtx, cancel := context.WithTimeout(ctx, 1*time.Minute)
-				err = debounce.Debounce(headerCtx, listenerLogger, func(ctx context.Context) error {
-					header, err = client.HeaderByNumber(ctx, nil)
-					return err
-				})
-				cancel()
-				if err != nil {
-					if ctx.Err() != nil {
-						return
-					}
-					listenerLogger.Errorw("failed to get latest block", "error", err, "subID", subID, "contractAddress", contractAddress.String())
-					backOffCount.Add(1)
-					continue
+			subscriber, ok := client.(headerSubscriber)
+			if !ok {
+				listenerLogger.Errorw("client does not support SubscribeNewHead", "subID", subID)
+				return
+			}
+
+			sub, subscribeErr := subscriber.SubscribeNewHead(ctx, headCh)
+			if subscribeErr != nil {
+				if ctx.Err() != nil {
+					return
 				}
+				listenerLogger.Errorw("failed to subscribe to new heads", "error", subscribeErr, "subID", subID)
+				backOffCount.Add(1)
+				continue
+			}
+			eventSubscription = sub
+			listenerLogger.Infow("subscribed to new heads", "subID", subID)
+			backOffCount.Store(0)
 
-				go reconcileBlockRange(
+			// Initial sync up to current head
+			var header *types.Header
+			var err error
+			headerCtx, cancel := context.WithTimeout(ctx, 1*time.Minute)
+			err = debounce.Debounce(headerCtx, listenerLogger, func(ctx context.Context) error {
+				header, err = client.HeaderByNumber(ctx, nil)
+				return err
+			})
+			cancel()
+			if err != nil {
+				listenerLogger.Errorw("failed to get latest block header", "error", err, "subID", subID)
+				eventSubscription.Unsubscribe()
+				eventSubscription = nil
+				backOffCount.Add(1)
+				continue
+			}
+
+			currentHead := header.Number.Uint64()
+			targetBlock := currentHead
+
+			if targetBlock > lastBlock {
+				reconcileBlockRange(
 					ctx,
 					client,
 					subID,
 					contractAddress,
 					networkID,
-					header.Number.Uint64(),
+					targetBlock,
 					lastBlock,
 					lastIndex,
 					topics,
-					historicalCh,
+					handler,
 				)
+				lastBlock = targetBlock
+				lastIndex = 0
 			}
-
-			watchFQ := ethereum.FilterQuery{
-				Addresses: []common.Address{contractAddress},
-			}
-			eventSub, err := client.SubscribeFilterLogs(ctx, watchFQ, currentCh)
-			if err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				listenerLogger.Errorw("failed to subscribe on events", "error", err, "subID", subID, "contractAddress", contractAddress.String())
-				backOffCount.Add(1)
-				continue
-			}
-
-			eventSubscription = eventSub
-			listenerLogger.Infow("watching events", "subID", subID, "contractAddress", contractAddress.String())
-			backOffCount.Store(0)
 		}
 
 		select {
@@ -245,13 +258,26 @@ func listenEvents(
 			listenerLogger.Infow("context cancelled, stopping listener", "subID", subID)
 			eventSubscription.Unsubscribe()
 			return
-		case eventLog := <-historicalCh:
-			listenerLogger.Debugw("received historical event", "subID", subID, "blockNumber", eventLog.BlockNumber, "logIndex", eventLog.Index)
-			handler(eventLog)
-		case eventLog := <-currentCh:
-			lastBlock = eventLog.BlockNumber
-			listenerLogger.Debugw("received new event", "subID", subID, "blockNumber", lastBlock, "logIndex", eventLog.Index)
-			handler(eventLog)
+		case header := <-headCh:
+			currentHead := header.Number.Uint64()
+			targetBlock := currentHead
+
+			if targetBlock > lastBlock {
+				reconcileBlockRange(
+					ctx,
+					client,
+					subID,
+					contractAddress,
+					networkID,
+					targetBlock,
+					lastBlock,
+					lastIndex,
+					topics,
+					handler,
+				)
+				lastBlock = targetBlock
+				lastIndex = 0
+			}
 		case err := <-eventSubscription.Err():
 			if err != nil {
 				listenerLogger.Errorw("event subscription error", "error", err, "subID", subID, "contractAddress", contractAddress.String())
@@ -275,7 +301,7 @@ func reconcileBlockRange(
 	lastBlock uint64,
 	lastIndex uint32,
 	topics [][]common.Hash,
-	historicalCh chan types.Log,
+	handler logHandler,
 ) {
 	var backOffCount atomic.Uint64
 	const blockStep = 10000
@@ -335,7 +361,7 @@ func reconcileBlockRange(
 				continue
 			}
 
-			historicalCh <- ethLog
+			handler(ethLog)
 		}
 
 		startBlock = endBlock + 1
@@ -372,13 +398,13 @@ func extractAdvisedBlockRange(msg string) (startBlock, endBlock uint64, err erro
 func waitForBackOffTimeout(ctx context.Context, backOffCount int, originator string) bool {
 	if backOffCount > maxBackOffCount {
 		listenerLogger.Errorw("back off limit reached, exiting", "originator", originator, "backOffCount", backOffCount)
-		return true
+		return false
 	}
 
 	if backOffCount > 0 {
 		listenerLogger.Infow("backing off", "originator", originator, "backOffCount", backOffCount)
 		select {
-		case <-time.After(time.Duration(2^backOffCount-1) * time.Second):
+		case <-time.After(time.Duration(1<<backOffCount) * time.Second):
 		case <-ctx.Done():
 			return false
 		}
