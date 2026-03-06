@@ -186,7 +186,7 @@ func (svc *Service) RunWorkerWithContext(ctx context.Context) error {
 				}
 
 				svc.Logger.Info("Reconnecting to Ethereum RPC...")
-				newClient, err := ethclient.Dial(svc.Config.Blockchain.RPCURL)
+				newClient, err := ethclient.DialContext(ctx, svc.Config.Blockchain.RPCURL)
 				if err != nil {
 					svc.Logger.Error("Failed to reconnect to Ethereum RPC", "error", err)
 					select {
