@@ -236,7 +236,7 @@ func listenEventsWithConfirmations(
 		}
 		safeBlock := latestBlock - confirmationBlocks
 
-		if lastBlock == 0 || safeBlock <= lastBlock {
+		if safeBlock <= lastBlock && lastBlock != 0 {
 			continue
 		}
 
