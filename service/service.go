@@ -224,7 +224,13 @@ func (svc *Service) RunWorkerWithContext(ctx context.Context) error {
 			// Determine where to resume from.
 			fromBlock, fromLogIdx, err := svc.store.GetCursor("withdraw_started")
 			if err != nil {
-				svc.Logger.Warn("Failed to read withdraw_started cursor", "error", err)
+				svc.Logger.Error("Failed to read withdraw_started cursor, retrying", "error", err)
+				select {
+				case <-time.After(5 * time.Second):
+					continue
+				case <-ctx.Done():
+					return nil
+				}
 			}
 			if fromBlock == 0 && svc.Config.Blockchain.StartBlock > 0 {
 				fromBlock = svc.Config.Blockchain.StartBlock
@@ -239,7 +245,14 @@ func (svc *Service) RunWorkerWithContext(ctx context.Context) error {
 				svc.processWithdrawal(ctx, event)
 			}
 
-			// Watcher returned — loop back to reconnect (or exit).
+			// Watcher returned — back off before reconnecting to avoid
+			// tight reconnect storms if the listener exits immediately.
+			svc.Logger.Warn("Event watcher stopped, will retry after backoff")
+			select {
+			case <-time.After(5 * time.Second):
+			case <-ctx.Done():
+				return nil
+			}
 		}
 	})
 
