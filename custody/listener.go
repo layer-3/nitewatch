@@ -28,21 +28,27 @@ const (
 
 // Listener handles monitoring the blockchain for events from the custody contract.
 type Listener struct {
-	client           bind.ContractBackend
-	contractAddr     common.Address
-	withdrawFilterer *IWithdrawFilterer
-	depositFilterer  *IDepositFilterer
+	client             bind.ContractBackend
+	contractAddr       common.Address
+	confirmationBlocks uint64
+	pollInterval       time.Duration
+	withdrawFilterer   *IWithdrawFilterer
+	depositFilterer    *IDepositFilterer
 }
 
 // NewListener creates a new Listener instance.
 // client: an Ethereum client supporting log subscriptions (e.g. *ethclient.Client via WebSocket)
 // contractAddr: address of the custody contract
+// confirmationBlocks: number of blocks to wait before processing events (0 = immediate)
+// pollInterval: how often to poll for confirmed blocks when confirmationBlocks > 0
 // withdraw: bound IWithdraw contract instance
 // deposit: bound IDeposit contract instance (can be nil if deposit events are not needed)
-func NewListener(client bind.ContractBackend, contractAddr common.Address, withdraw *IWithdraw, deposit *IDeposit) *Listener {
+func NewListener(client bind.ContractBackend, contractAddr common.Address, confirmationBlocks uint64, pollInterval time.Duration, withdraw *IWithdraw, deposit *IDeposit) *Listener {
 	l := &Listener{
-		client:       client,
-		contractAddr: contractAddr,
+		client:             client,
+		contractAddr:       contractAddr,
+		confirmationBlocks: confirmationBlocks,
+		pollInterval:       pollInterval,
 	}
 	if withdraw != nil {
 		l.withdrawFilterer = &withdraw.IWithdrawFilterer
@@ -67,7 +73,7 @@ func (l *Listener) WatchWithdrawStarted(ctx context.Context, sink chan<- *Withdr
 	}
 	topic := parsedABI.Events["WithdrawStarted"].ID
 
-	listenEvents(ctx, l.client, "withdraw-started", l.contractAddr, 0, fromBlock, fromLogIndex,
+	listenEvents(ctx, l.client, "withdraw-started", l.contractAddr, l.confirmationBlocks, l.pollInterval, fromBlock, fromLogIndex,
 		[][]common.Hash{{topic}},
 		func(log types.Log) {
 			ev, err := l.withdrawFilterer.ParseWithdrawStarted(log)
@@ -99,7 +105,7 @@ func (l *Listener) WatchWithdrawFinalized(ctx context.Context, sink chan<- *With
 	}
 	topic := parsedABI.Events["WithdrawFinalized"].ID
 
-	listenEvents(ctx, l.client, "withdraw-finalized", l.contractAddr, 0, fromBlock, fromLogIndex,
+	listenEvents(ctx, l.client, "withdraw-finalized", l.contractAddr, l.confirmationBlocks, l.pollInterval, fromBlock, fromLogIndex,
 		[][]common.Hash{{topic}},
 		func(log types.Log) {
 			ev, err := l.withdrawFilterer.ParseWithdrawFinalized(log)
@@ -132,7 +138,7 @@ func (l *Listener) WatchDeposited(ctx context.Context, sink chan<- *DepositedEve
 	}
 	topic := parsedABI.Events["Deposited"].ID
 
-	listenEvents(ctx, l.client, "deposited", l.contractAddr, 0, fromBlock, fromLogIndex,
+	listenEvents(ctx, l.client, "deposited", l.contractAddr, l.confirmationBlocks, l.pollInterval, fromBlock, fromLogIndex,
 		[][]common.Hash{{topic}},
 		func(log types.Log) {
 			ev, err := l.depositFilterer.ParseDeposited(log)
@@ -160,7 +166,102 @@ func listenEvents(
 	client bind.ContractBackend,
 	subID string,
 	contractAddress common.Address,
-	networkID uint32,
+	confirmationBlocks uint64,
+	pollInterval time.Duration,
+	lastBlock uint64,
+	lastIndex uint32,
+	topics [][]common.Hash,
+	handler logHandler,
+) {
+	if confirmationBlocks > 0 {
+		listenEventsWithConfirmations(ctx, client, subID, contractAddress, confirmationBlocks, pollInterval, lastBlock, lastIndex, topics, handler)
+	} else {
+		listenEventsImmediate(ctx, client, subID, contractAddress, lastBlock, lastIndex, topics, handler)
+	}
+}
+
+// listenEventsWithConfirmations polls for new confirmed blocks at pollInterval
+// and only processes events from blocks that have at least confirmationBlocks on top.
+func listenEventsWithConfirmations(
+	ctx context.Context,
+	client bind.ContractBackend,
+	subID string,
+	contractAddress common.Address,
+	confirmationBlocks uint64,
+	pollInterval time.Duration,
+	lastBlock uint64,
+	lastIndex uint32,
+	topics [][]common.Hash,
+	handler logHandler,
+) {
+	var backOffCount atomic.Uint64
+
+	listenerLogger.Debugw("starting confirmed-block polling", "subID", subID, "confirmationBlocks", confirmationBlocks, "pollInterval", pollInterval)
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			listenerLogger.Infow("context cancelled, stopping listener", "subID", subID)
+			return
+		case <-ticker.C:
+		}
+
+		if !waitForBackOffTimeout(ctx, int(backOffCount.Load()), "confirmed-block poll") {
+			return
+		}
+
+		headerCtx, cancel := context.WithTimeout(ctx, 1*time.Minute)
+		var header *types.Header
+		err := debounce.Debounce(headerCtx, listenerLogger, func(ctx context.Context) error {
+			var err error
+			header, err = client.HeaderByNumber(ctx, nil)
+			return err
+		})
+		cancel()
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			listenerLogger.Errorw("failed to get latest block", "error", err, "subID", subID)
+			backOffCount.Add(1)
+			continue
+		}
+
+		latestBlock := header.Number.Uint64()
+		if latestBlock < confirmationBlocks {
+			continue
+		}
+		safeBlock := latestBlock - confirmationBlocks
+
+		if lastBlock == 0 || safeBlock <= lastBlock {
+			continue
+		}
+
+		logsCh := make(chan types.Log, 1)
+		go reconcileBlockRange(ctx, client, subID, contractAddress, safeBlock, lastBlock, lastIndex, topics, logsCh)
+
+		for ethLog := range logsCh {
+			handler(ethLog)
+			lastBlock = ethLog.BlockNumber
+			lastIndex = uint32(ethLog.Index)
+		}
+
+		lastBlock = safeBlock
+		lastIndex = 0
+		backOffCount.Store(0)
+	}
+}
+
+// listenEventsImmediate is the original behavior: subscribe to live events via WebSocket
+// and process them immediately without waiting for confirmations.
+func listenEventsImmediate(
+	ctx context.Context,
+	client bind.ContractBackend,
+	subID string,
+	contractAddress common.Address,
 	lastBlock uint64,
 	lastIndex uint32,
 	topics [][]common.Hash,
@@ -213,7 +314,6 @@ func listenEvents(
 					client,
 					subID,
 					contractAddress,
-					networkID,
 					header.Number.Uint64(),
 					lastBlock,
 					lastIndex,
@@ -270,7 +370,6 @@ func reconcileBlockRange(
 	client bind.ContractBackend,
 	subID string,
 	contractAddress common.Address,
-	networkID uint32,
 	currentBlock uint64,
 	lastBlock uint64,
 	lastIndex uint32,

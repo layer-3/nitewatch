@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"gopkg.in/yaml.v3"
@@ -20,10 +21,12 @@ type Config struct {
 }
 
 type BlockchainConfig struct {
-	RPCURL       string `yaml:"rpc_url"`
-	ContractAddr string `yaml:"contract_address"`
-	PrivateKey   string `yaml:"private_key"`
-	StartBlock   uint64 `yaml:"start_block"`
+	RPCURL             string        `yaml:"rpc_url"`
+	ContractAddr       string        `yaml:"contract_address"`
+	PrivateKey         string        `yaml:"private_key"`
+	StartBlock         uint64        `yaml:"start_block"`
+	ConfirmationBlocks uint64        `yaml:"confirmation_blocks"`
+	PollInterval       time.Duration `yaml:"poll_interval"`
 }
 
 // LimitsConfig maps token contract addresses to their withdrawal rate limits.
@@ -113,6 +116,10 @@ func parse(data []byte) (*Config, error) {
 
 	if cfg.ListenAddr == "" {
 		cfg.ListenAddr = ":8080"
+	}
+
+	if cfg.Blockchain.PollInterval == 0 {
+		cfg.Blockchain.PollInterval = 12 * time.Second
 	}
 
 	return &cfg, nil
