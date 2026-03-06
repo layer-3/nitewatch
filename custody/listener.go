@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"regexp"
 	"strconv"
@@ -239,7 +240,7 @@ func listenEvents(
 			targetBlock := currentHead
 
 			if targetBlock > lastBlock {
-				reconcileBlockRange(
+				lastBlock, lastIndex = reconcileBlockRange(
 					ctx,
 					client,
 					subID,
@@ -251,8 +252,6 @@ func listenEvents(
 					topics,
 					handler,
 				)
-				lastBlock = targetBlock
-				lastIndex = 0
 			}
 		}
 
@@ -266,7 +265,7 @@ func listenEvents(
 			targetBlock := currentHead
 
 			if targetBlock > lastBlock {
-				reconcileBlockRange(
+				lastBlock, lastIndex = reconcileBlockRange(
 					ctx,
 					client,
 					subID,
@@ -278,8 +277,6 @@ func listenEvents(
 					topics,
 					handler,
 				)
-				lastBlock = targetBlock
-				lastIndex = 0
 			}
 		case err := <-eventSubscription.Err():
 			if err != nil {
@@ -294,6 +291,18 @@ func listenEvents(
 	}
 }
 
+// reconcileBlockRange fetches historical logs from lastBlock up to
+// currentBlock and feeds them to handler.  It returns the cursor
+// (block, logIndex) representing the most recent log that was fully
+// processed.  When an entire batch is consumed without any matching
+// logs, the cursor advances to (endBlock, math.MaxUint32) so that the
+// caller never re-queries logs from blocks that were already scanned.
+//
+// The returned logIndex is math.MaxUint32 when the indicated block was
+// fully consumed (i.e. either it contained no matching events or all
+// its events were dispatched).  Callers should propagate these values
+// into lastBlock / lastIndex so the skip-guard at the top of the
+// processing loop works correctly on the next invocation.
 func reconcileBlockRange(
 	ctx context.Context,
 	client bind.ContractBackend,
@@ -305,7 +314,10 @@ func reconcileBlockRange(
 	lastIndex uint32,
 	topics [][]common.Hash,
 	handler logHandler,
-) {
+) (finishedBlock uint64, finishedIndex uint32) {
+	finishedBlock = lastBlock
+	finishedIndex = lastIndex
+
 	var backOffCount atomic.Uint64
 	const blockStep = 10000
 	startBlock := lastBlock
@@ -365,11 +377,22 @@ func reconcileBlockRange(
 			}
 
 			handler(ethLog)
+			finishedBlock = ethLog.BlockNumber
+			finishedIndex = uint32(ethLog.Index)
+		}
+
+		// Even if no matching logs were found in this batch, we have
+		// fully scanned up to endBlock — advance the cursor so the
+		// next call does not re-query the same range.
+		if finishedBlock < endBlock {
+			finishedBlock = endBlock
+			finishedIndex = math.MaxUint32
 		}
 
 		startBlock = endBlock + 1
 		endBlock += blockStep
 	}
+	return
 }
 
 func extractAdvisedBlockRange(msg string) (startBlock, endBlock uint64, err error) {
