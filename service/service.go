@@ -35,9 +35,10 @@ import (
 // gas *limit* can be significantly higher than the gas *consumed*. When
 // on-chain state changes between estimation and mining (e.g., another signer's
 // approval shifts finalizeWithdraw from the "record approval" path into the
-// "execute withdrawal + ETH transfer" path), the gas deficit can reach ~33%.
-// A 50% buffer covers this with headroom.
-const gasEstimateBufferPercent = 50
+// "execute withdrawal + ETH/ERC20 transfer" path), the gas deficit can reach
+// ~33% for ETH and ~67% for ERC20 transfers. A 75% buffer covers both with
+// headroom.
+const gasEstimateBufferPercent = 75
 
 type httpServer struct {
 	Engine *gin.Engine
