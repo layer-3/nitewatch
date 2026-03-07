@@ -15,7 +15,6 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/event"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/layer-3/clearsync/pkg/debounce"
 )
@@ -28,21 +27,32 @@ const (
 
 // Listener handles monitoring the blockchain for events from the custody contract.
 type Listener struct {
-	client           bind.ContractBackend
-	contractAddr     common.Address
-	withdrawFilterer *IWithdrawFilterer
-	depositFilterer  *IDepositFilterer
+	client             bind.ContractBackend
+	contractAddr       common.Address
+	confirmationBlocks uint64
+	pollInterval       time.Duration
+	withdrawFilterer   *IWithdrawFilterer
+	depositFilterer    *IDepositFilterer
 }
 
 // NewListener creates a new Listener instance.
 // client: an Ethereum client supporting log subscriptions (e.g. *ethclient.Client via WebSocket)
 // contractAddr: address of the custody contract
+// confirmationBlocks: number of blocks to wait before processing events (must be > 0)
+// pollInterval: how often to poll for confirmed blocks (defaults to 12s if <= 0)
 // withdraw: bound IWithdraw contract instance
 // deposit: bound IDeposit contract instance (can be nil if deposit events are not needed)
-func NewListener(client bind.ContractBackend, contractAddr common.Address, withdraw *IWithdraw, deposit *IDeposit) *Listener {
+const defaultPollInterval = 12 * time.Second
+
+func NewListener(client bind.ContractBackend, contractAddr common.Address, confirmationBlocks uint64, pollInterval time.Duration, withdraw *IWithdraw, deposit *IDeposit) *Listener {
+	if pollInterval <= 0 {
+		pollInterval = defaultPollInterval
+	}
 	l := &Listener{
-		client:       client,
-		contractAddr: contractAddr,
+		client:             client,
+		contractAddr:       contractAddr,
+		confirmationBlocks: confirmationBlocks,
+		pollInterval:       pollInterval,
 	}
 	if withdraw != nil {
 		l.withdrawFilterer = &withdraw.IWithdrawFilterer
@@ -67,7 +77,7 @@ func (l *Listener) WatchWithdrawStarted(ctx context.Context, sink chan<- *Withdr
 	}
 	topic := parsedABI.Events["WithdrawStarted"].ID
 
-	listenEvents(ctx, l.client, "withdraw-started", l.contractAddr, 0, fromBlock, fromLogIndex,
+	listenEvents(ctx, l.client, "withdraw-started", l.contractAddr, l.confirmationBlocks, l.pollInterval, fromBlock, fromLogIndex,
 		[][]common.Hash{{topic}},
 		func(log types.Log) {
 			ev, err := l.withdrawFilterer.ParseWithdrawStarted(log)
@@ -99,7 +109,7 @@ func (l *Listener) WatchWithdrawFinalized(ctx context.Context, sink chan<- *With
 	}
 	topic := parsedABI.Events["WithdrawFinalized"].ID
 
-	listenEvents(ctx, l.client, "withdraw-finalized", l.contractAddr, 0, fromBlock, fromLogIndex,
+	listenEvents(ctx, l.client, "withdraw-finalized", l.contractAddr, l.confirmationBlocks, l.pollInterval, fromBlock, fromLogIndex,
 		[][]common.Hash{{topic}},
 		func(log types.Log) {
 			ev, err := l.withdrawFilterer.ParseWithdrawFinalized(log)
@@ -132,7 +142,7 @@ func (l *Listener) WatchDeposited(ctx context.Context, sink chan<- *DepositedEve
 	}
 	topic := parsedABI.Events["Deposited"].ID
 
-	listenEvents(ctx, l.client, "deposited", l.contractAddr, 0, fromBlock, fromLogIndex,
+	listenEvents(ctx, l.client, "deposited", l.contractAddr, l.confirmationBlocks, l.pollInterval, fromBlock, fromLogIndex,
 		[][]common.Hash{{topic}},
 		func(log types.Log) {
 			ev, err := l.depositFilterer.ParseDeposited(log)
@@ -151,8 +161,8 @@ func (l *Listener) WatchDeposited(ctx context.Context, sink chan<- *DepositedEve
 	)
 }
 
-// listenEvents subscribes to on-chain logs matching the given topics and feeds them to handler.
-// It handles reconnection with backoff, historical log reconciliation, and live subscription.
+// listenEvents polls for new confirmed blocks at pollInterval and only
+// processes events from blocks that have at least confirmationBlocks on top.
 type logHandler func(log types.Log)
 
 func listenEvents(
@@ -160,108 +170,77 @@ func listenEvents(
 	client bind.ContractBackend,
 	subID string,
 	contractAddress common.Address,
-	networkID uint32,
+	confirmationBlocks uint64,
+	pollInterval time.Duration,
 	lastBlock uint64,
 	lastIndex uint32,
 	topics [][]common.Hash,
 	handler logHandler,
 ) {
 	var backOffCount atomic.Uint64
-	var historicalCh, currentCh chan types.Log
-	var eventSubscription event.Subscription
 
-	listenerLogger.Debugw("starting listening events", "subID", subID, "contractAddress", contractAddress.String())
+	listenerLogger.Debugw("starting confirmed-block polling", "subID", subID, "confirmationBlocks", confirmationBlocks, "pollInterval", pollInterval)
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
 	for {
-		if err := ctx.Err(); err != nil {
-			listenerLogger.Infow("context cancelled, stopping listener", "subID", subID)
-			if eventSubscription != nil {
-				eventSubscription.Unsubscribe()
-			}
-			return
-		}
-
-		if eventSubscription == nil {
-			if !waitForBackOffTimeout(ctx, int(backOffCount.Load()), "event subscription") {
-				return
-			}
-
-			historicalCh = make(chan types.Log, 1)
-			currentCh = make(chan types.Log, 100)
-
-			if lastBlock == 0 {
-				listenerLogger.Infow("skipping historical logs fetching", "subID", subID, "contractAddress", contractAddress.String())
-			} else {
-				var header *types.Header
-				var err error
-				headerCtx, cancel := context.WithTimeout(ctx, 1*time.Minute)
-				err = debounce.Debounce(headerCtx, listenerLogger, func(ctx context.Context) error {
-					header, err = client.HeaderByNumber(ctx, nil)
-					return err
-				})
-				cancel()
-				if err != nil {
-					if ctx.Err() != nil {
-						return
-					}
-					listenerLogger.Errorw("failed to get latest block", "error", err, "subID", subID, "contractAddress", contractAddress.String())
-					backOffCount.Add(1)
-					continue
-				}
-
-				go reconcileBlockRange(
-					ctx,
-					client,
-					subID,
-					contractAddress,
-					networkID,
-					header.Number.Uint64(),
-					lastBlock,
-					lastIndex,
-					topics,
-					historicalCh,
-				)
-			}
-
-			watchFQ := ethereum.FilterQuery{
-				Addresses: []common.Address{contractAddress},
-			}
-			eventSub, err := client.SubscribeFilterLogs(ctx, watchFQ, currentCh)
-			if err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				listenerLogger.Errorw("failed to subscribe on events", "error", err, "subID", subID, "contractAddress", contractAddress.String())
-				backOffCount.Add(1)
-				continue
-			}
-
-			eventSubscription = eventSub
-			listenerLogger.Infow("watching events", "subID", subID, "contractAddress", contractAddress.String())
-			backOffCount.Store(0)
-		}
-
 		select {
 		case <-ctx.Done():
 			listenerLogger.Infow("context cancelled, stopping listener", "subID", subID)
-			eventSubscription.Unsubscribe()
 			return
-		case eventLog := <-historicalCh:
-			listenerLogger.Debugw("received historical event", "subID", subID, "blockNumber", eventLog.BlockNumber, "logIndex", eventLog.Index)
-			handler(eventLog)
-		case eventLog := <-currentCh:
-			lastBlock = eventLog.BlockNumber
-			listenerLogger.Debugw("received new event", "subID", subID, "blockNumber", lastBlock, "logIndex", eventLog.Index)
-			handler(eventLog)
-		case err := <-eventSubscription.Err():
-			if err != nil {
-				listenerLogger.Errorw("event subscription error", "error", err, "subID", subID, "contractAddress", contractAddress.String())
-				eventSubscription.Unsubscribe()
-			} else {
-				listenerLogger.Debugw("subscription closed, resubscribing", "subID", subID, "contractAddress", contractAddress.String())
-			}
-
-			eventSubscription = nil
+		case <-ticker.C:
 		}
+
+		if !waitForBackOffTimeout(ctx, int(backOffCount.Load()), "confirmed-block poll") {
+			return
+		}
+
+		headerCtx, cancel := context.WithTimeout(ctx, 1*time.Minute)
+		var header *types.Header
+		err := debounce.Debounce(headerCtx, listenerLogger, func(ctx context.Context) error {
+			var err error
+			header, err = client.HeaderByNumber(ctx, nil)
+			return err
+		})
+		cancel()
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			listenerLogger.Errorw("failed to get latest block", "error", err, "subID", subID)
+			backOffCount.Add(1)
+			continue
+		}
+
+		latestBlock := header.Number.Uint64()
+		if latestBlock < confirmationBlocks {
+			continue
+		}
+		safeBlock := latestBlock - confirmationBlocks
+
+		if safeBlock <= lastBlock && lastBlock != 0 {
+			continue
+		}
+
+		logsCh := make(chan types.Log, 1)
+		go reconcileBlockRange(ctx, client, subID, contractAddress, safeBlock, lastBlock, lastIndex, topics, logsCh)
+
+		for ethLog := range logsCh {
+			handler(ethLog)
+			lastBlock = ethLog.BlockNumber
+			lastIndex = uint32(ethLog.Index)
+		}
+
+		// Advance the cursor to safeBlock only if no logs were emitted
+		// in that block (otherwise lastBlock/lastIndex already point at
+		// the precise last-emitted log and resetting lastIndex would
+		// cause replays on the next cycle).
+		if lastBlock < safeBlock {
+			lastBlock = safeBlock
+			lastIndex = 0
+		}
+		backOffCount.Store(0)
 	}
 }
 
@@ -270,13 +249,14 @@ func reconcileBlockRange(
 	client bind.ContractBackend,
 	subID string,
 	contractAddress common.Address,
-	networkID uint32,
 	currentBlock uint64,
 	lastBlock uint64,
 	lastIndex uint32,
 	topics [][]common.Hash,
 	historicalCh chan types.Log,
 ) {
+	defer close(historicalCh)
+
 	var backOffCount atomic.Uint64
 	const blockStep = 10000
 	startBlock := lastBlock
@@ -372,13 +352,13 @@ func extractAdvisedBlockRange(msg string) (startBlock, endBlock uint64, err erro
 func waitForBackOffTimeout(ctx context.Context, backOffCount int, originator string) bool {
 	if backOffCount > maxBackOffCount {
 		listenerLogger.Errorw("back off limit reached, exiting", "originator", originator, "backOffCount", backOffCount)
-		return true
+		return false
 	}
 
 	if backOffCount > 0 {
 		listenerLogger.Infow("backing off", "originator", originator, "backOffCount", backOffCount)
 		select {
-		case <-time.After(time.Duration(2^backOffCount-1) * time.Second):
+		case <-time.After(time.Duration((1<<uint(backOffCount))-1) * time.Second):
 		case <-ctx.Done():
 			return false
 		}

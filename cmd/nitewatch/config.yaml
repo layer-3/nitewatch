@@ -3,6 +3,8 @@ blockchain:
   contract_address: "${NITEWATCH_CONTRACT_ADDRESS}"
   private_key: "${NITEWATCH_PRIVATE_KEY}"
   start_block: 24593000
+  confirmation_blocks: 12
+  poll_interval: 12s
 
 limits:
   # Native ETH (zero address)

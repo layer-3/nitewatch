@@ -125,8 +125,10 @@ func createNitewatchService(t *testing.T, env *testEnv, limitWei string) *servic
 
 	conf := config.Config{
 		Blockchain: config.BlockchainConfig{
-			ContractAddr: env.addr.Hex(),
-			PrivateKey:   fmt.Sprintf("%x", crypto.FromECDSA(env.nitewatchKey())),
+			ContractAddr:       env.addr.Hex(),
+			PrivateKey:         fmt.Sprintf("%x", crypto.FromECDSA(env.nitewatchKey())),
+			ConfirmationBlocks: 1,
+			PollInterval:       200 * time.Millisecond,
 		},
 		Limits: config.LimitsConfig{
 			nativeToken: config.LimitConfig{
