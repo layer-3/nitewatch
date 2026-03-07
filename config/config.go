@@ -87,6 +87,9 @@ func (c BlockchainConfig) Validate() error {
 	if !common.IsHexAddress(c.ContractAddr) {
 		return fmt.Errorf("invalid contract address: %s", c.ContractAddr)
 	}
+	if c.ConfirmationBlocks > 0 && c.PollInterval < 1*time.Second {
+		return fmt.Errorf("poll_interval must be >= 1s when confirmation_blocks > 0, got: %s", c.PollInterval)
+	}
 	return nil
 }
 

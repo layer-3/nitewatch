@@ -43,7 +43,12 @@ type Listener struct {
 // pollInterval: how often to poll for confirmed blocks when confirmationBlocks > 0
 // withdraw: bound IWithdraw contract instance
 // deposit: bound IDeposit contract instance (can be nil if deposit events are not needed)
+const defaultPollInterval = 12 * time.Second
+
 func NewListener(client bind.ContractBackend, contractAddr common.Address, confirmationBlocks uint64, pollInterval time.Duration, withdraw *IWithdraw, deposit *IDeposit) *Listener {
+	if pollInterval <= 0 {
+		pollInterval = defaultPollInterval
+	}
 	l := &Listener{
 		client:             client,
 		contractAddr:       contractAddr,
@@ -249,8 +254,14 @@ func listenEventsWithConfirmations(
 			lastIndex = uint32(ethLog.Index)
 		}
 
-		lastBlock = safeBlock
-		lastIndex = 0
+		// Advance the cursor to safeBlock only if no logs were emitted
+		// in that block (otherwise lastBlock/lastIndex already point at
+		// the precise last-emitted log and resetting lastIndex would
+		// cause replays on the next cycle).
+		if lastBlock < safeBlock {
+			lastBlock = safeBlock
+			lastIndex = 0
+		}
 		backOffCount.Store(0)
 	}
 }
@@ -345,7 +356,13 @@ func listenEventsImmediate(
 			listenerLogger.Infow("context cancelled, stopping listener", "subID", subID)
 			eventSubscription.Unsubscribe()
 			return
-		case eventLog := <-historicalCh:
+		case eventLog, ok := <-historicalCh:
+			if !ok {
+				// reconcileBlockRange finished and closed the channel.
+				// Nil it out so the select no longer fires on this case.
+				historicalCh = nil
+				continue
+			}
 			listenerLogger.Debugw("received historical event", "subID", subID, "blockNumber", eventLog.BlockNumber, "logIndex", eventLog.Index)
 			handler(eventLog)
 		case eventLog := <-currentCh:
@@ -473,13 +490,13 @@ func extractAdvisedBlockRange(msg string) (startBlock, endBlock uint64, err erro
 func waitForBackOffTimeout(ctx context.Context, backOffCount int, originator string) bool {
 	if backOffCount > maxBackOffCount {
 		listenerLogger.Errorw("back off limit reached, exiting", "originator", originator, "backOffCount", backOffCount)
-		return true
+		return false
 	}
 
 	if backOffCount > 0 {
 		listenerLogger.Infow("backing off", "originator", originator, "backOffCount", backOffCount)
 		select {
-		case <-time.After(time.Duration(2^backOffCount-1) * time.Second):
+		case <-time.After(time.Duration((1<<uint(backOffCount))-1) * time.Second):
 		case <-ctx.Done():
 			return false
 		}
