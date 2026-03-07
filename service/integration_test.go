@@ -408,7 +408,7 @@ func TestGasBufferApplied(t *testing.T) {
 
 // TestGasEstimateRaceCondition demonstrates that the race condition between gas
 // estimation and transaction mining can cause an "out of gas" revert, and that
-// the 50% gas buffer is sufficient to cover the difference for both ETH and
+// the gas buffer is sufficient to cover the difference for both ETH and
 // ERC20 withdrawals.
 //
 // With threshold=3 on ThresholdCustody:
@@ -418,7 +418,7 @@ func TestGasBufferApplied(t *testing.T) {
 //  3. Signer2 approves in between (now 2/3 on-chain)
 //  4. Signer1's stale estimate is too low for the expensive path (3/3 with transfer)
 //
-// The test compares both gas estimates and shows the 50% buffer covers the gap.
+// The test compares both gas estimates and shows the buffer covers the gap.
 func TestGasEstimateRaceCondition(t *testing.T) {
 	const gasBufferPercent = 75
 
