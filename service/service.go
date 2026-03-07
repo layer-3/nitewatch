@@ -174,22 +174,96 @@ func (svc *Service) RunWorkerWithContext(ctx context.Context) error {
 	})
 
 	g.Go(func() error {
-		fromBlock, fromLogIdx, err := svc.store.GetCursor("withdraw_started")
-		if err != nil {
-			svc.Logger.Warn("Failed to read withdraw_started cursor, starting from head", "error", err)
-			// If cursor is missing, we default to 0. But if StartBlock is configured, we should use that.
-		}
-		if fromBlock == 0 && svc.Config.Blockchain.StartBlock > 0 {
-			fromBlock = svc.Config.Blockchain.StartBlock
-		}
+		defer func() {
+			svc.Logger.Info("WithdrawStarted event watcher stopped")
+		}()
 
-		svc.Logger.Info("Starting WithdrawStarted event watcher", "from_block", fromBlock, "from_log_index", fromLogIdx)
-		withdrawals := make(chan *custody.WithdrawStartedEvent)
-		go svc.listener.WatchWithdrawStarted(ctx, withdrawals, fromBlock, fromLogIdx)
-		for event := range withdrawals {
-			svc.processWithdrawal(ctx, event)
+		firstRun := true
+
+		for {
+			if ctx.Err() != nil {
+				return nil
+			}
+
+			if !firstRun {
+				// Reconnection only works when we have a dialable RPC URL.
+				// When the service was created via NewWithBackend (e.g. integration
+				// tests with a simulated backend), RPCURL is empty and there is
+				// nothing to re-dial — just exit.
+				if svc.Config.Blockchain.RPCURL == "" {
+					svc.Logger.Info("No RPC URL configured, cannot reconnect")
+					return nil
+				}
+
+				svc.Logger.Info("Reconnecting to Ethereum RPC...")
+				newClient, err := ethclient.DialContext(ctx, svc.Config.Blockchain.RPCURL)
+				if err != nil {
+					svc.Logger.Error("Failed to reconnect to Ethereum RPC", "error", err)
+					select {
+					case <-time.After(5 * time.Second):
+						continue
+					case <-ctx.Done():
+						return nil
+					}
+				}
+
+				// Close old client and swap in the new one.
+				if svc.ethClient != nil {
+					svc.ethClient.Close()
+				}
+				svc.ethClient = newClient
+
+				// Re-bind contract with the new client.
+				addr := common.HexToAddress(svc.Config.Blockchain.ContractAddr)
+				withdrawContract, err := custody.NewIWithdraw(addr, newClient)
+				if err != nil {
+					svc.Logger.Error("Failed to re-bind contract", "error", err)
+					newClient.Close()
+					select {
+					case <-time.After(5 * time.Second):
+						continue
+					case <-ctx.Done():
+						return nil
+					}
+				}
+				svc.contract = withdrawContract
+				svc.listener = custody.NewListener(newClient, addr, withdrawContract, nil)
+			}
+			firstRun = false
+
+			// Determine where to resume from.
+			fromBlock, fromLogIdx, err := svc.store.GetCursor("withdraw_started")
+			if err != nil {
+				svc.Logger.Error("Failed to read withdraw_started cursor, retrying", "error", err)
+				select {
+				case <-time.After(5 * time.Second):
+					continue
+				case <-ctx.Done():
+					return nil
+				}
+			}
+			if fromBlock == 0 && svc.Config.Blockchain.StartBlock > 0 {
+				fromBlock = svc.Config.Blockchain.StartBlock
+			}
+
+			svc.Logger.Info("Starting WithdrawStarted event watcher", "from_block", fromBlock, "from_log_index", fromLogIdx)
+
+			withdrawals := make(chan *custody.WithdrawStartedEvent)
+			go svc.listener.WatchWithdrawStarted(ctx, withdrawals, fromBlock, fromLogIdx)
+
+			for event := range withdrawals {
+				svc.processWithdrawal(ctx, event)
+			}
+
+			// Watcher returned — back off before reconnecting to avoid
+			// tight reconnect storms if the listener exits immediately.
+			svc.Logger.Warn("Event watcher stopped, will retry after backoff")
+			select {
+			case <-time.After(5 * time.Second):
+			case <-ctx.Done():
+				return nil
+			}
 		}
-		return nil
 	})
 
 	g.Go(func() error {
