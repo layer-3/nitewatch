@@ -45,12 +45,20 @@ type WithdrawEventModel struct {
 	CreatedAt    time.Time `gorm:"not null;autoCreateTime"`
 }
 
+type PendingRejectionModel struct {
+	ID           uint64    `gorm:"primaryKey;autoIncrement"`
+	WithdrawalID string    `gorm:"type:varchar(66);not null;uniqueIndex"`
+	Reason       string    `gorm:"type:text;not null;default:''"`
+	Completed    bool      `gorm:"not null;default:false"`
+	CreatedAt    time.Time `gorm:"not null;autoCreateTime"`
+}
+
 type Adapter struct {
 	db *gorm.DB
 }
 
 func NewAdapter(db *gorm.DB) (*Adapter, error) {
-	if err := db.AutoMigrate(&WithdrawalModel{}, &BlockCursorModel{}, &WithdrawEventModel{}); err != nil {
+	if err := db.AutoMigrate(&WithdrawalModel{}, &BlockCursorModel{}, &WithdrawEventModel{}, &PendingRejectionModel{}); err != nil {
 		return nil, err
 	}
 	return &Adapter{db: db}, nil
@@ -125,6 +133,24 @@ func (a *Adapter) HasWithdrawEvent(withdrawalID string) bool {
 	var count int64
 	a.db.Model(&WithdrawEventModel{}).Where("withdrawal_id = ?", withdrawalID).Count(&count)
 	return count > 0
+}
+
+func (a *Adapter) SavePendingRejection(p *PendingRejectionModel) error {
+	return a.db.Clauses(clause.OnConflict{DoNothing: true}).Create(p).Error
+}
+
+func (a *Adapter) GetPendingRejections() ([]PendingRejectionModel, error) {
+	var pending []PendingRejectionModel
+	if err := a.db.Where("completed = ?", false).Find(&pending).Error; err != nil {
+		return nil, err
+	}
+	return pending, nil
+}
+
+func (a *Adapter) CompletePendingRejection(withdrawalID string) error {
+	return a.db.Model(&PendingRejectionModel{}).
+		Where("withdrawal_id = ?", withdrawalID).
+		Update("completed", true).Error
 }
 
 func upsertCursor(tx *gorm.DB, streamName string, blockNumber uint64, logIndex uint) error {

@@ -16,11 +16,17 @@ bytes32 constant ADD_SIGNERS_TYPEHASH =
     keccak256("AddSigners(address[] newSigners,uint64 newThreshold,uint256 nonce,uint256 deadline)");
 bytes32 constant REMOVE_SIGNERS_TYPEHASH =
     keccak256("RemoveSigners(address[] signersToRemove,uint64 newThreshold,uint256 nonce,uint256 deadline)");
+bytes32 constant SET_RATE_LIMIT_TYPEHASH =
+    keccak256("SetRateLimit(uint256 newCapacity,uint256 newRefillInterval,uint256 nonce,uint256 deadline)");
 
 string constant NAME = "ThresholdCustody";
 string constant VERSION = "1.0.0";
 
 uint256 constant OPERATION_EXPIRY = 1 hours;
+uint64 constant MIN_THRESHOLD = 2;
+uint256 constant DEFAULT_BUCKET_CAPACITY = 10;
+uint256 constant DEFAULT_REFILL_INTERVAL = 6 seconds;
+uint256 constant MIN_REFILL_INTERVAL = 1 seconds;
 
 contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, MultiSignerERC7913 {
     using SafeERC20 for IERC20;
@@ -35,8 +41,12 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
     error InvalidUser();
     error SignerAlreadyApproved();
     error WithdrawalNotExpired();
+    error ThresholdTooLow();
+    error RateLimitExceeded();
+    error InvalidRateLimitParams();
 
     event WithdrawalApproved(bytes32 indexed withdrawalId, address indexed signer, uint256 currentApprovals);
+    event RateLimitUpdated(uint256 newCapacity, uint256 newRefillInterval);
 
     struct WithdrawalRequest {
         address user;
@@ -51,11 +61,22 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
     mapping(bytes32 withdrawalId => mapping(address signer => bool hasApproved)) public withdrawalApprovals;
     uint256 public signerNonce;
 
+    uint256 public bucketCapacity;
+    uint256 public refillInterval;
+    uint256 public availableTokens;
+    uint256 public lastRefillTime;
+
     constructor(address[] memory initialSigners, uint64 threshold)
         EIP712(NAME, VERSION)
         MultiSignerERC7913(initialSigners.toAddressBytesArray(), threshold)
     {
         require(initialSigners.length != 0, EmptySignersArray());
+        require(threshold >= MIN_THRESHOLD, ThresholdTooLow());
+
+        bucketCapacity = DEFAULT_BUCKET_CAPACITY;
+        refillInterval = DEFAULT_REFILL_INTERVAL;
+        availableTokens = DEFAULT_BUCKET_CAPACITY;
+        lastRefillTime = block.timestamp;
     }
 
     modifier onlySigner() {
@@ -68,14 +89,11 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
     }
 
     function setThreshold(uint64 newThreshold, uint256 deadline, bytes calldata signatures) external {
-        require(block.timestamp <= deadline, DeadlineExpired());
-
-        bytes32 structHash = keccak256(abi.encode(SET_THRESHOLD_TYPEHASH, newThreshold, signerNonce, deadline));
-        bytes32 digest = _hashTypedDataV4(structHash);
-
-        require(_rawSignatureValidation(digest, signatures), InvalidSignature());
-
-        signerNonce++;
+        _verifyQuorumOp(
+            keccak256(abi.encode(SET_THRESHOLD_TYPEHASH, newThreshold, signerNonce, deadline)),
+            deadline,
+            signatures
+        );
 
         _setThreshold(newThreshold);
     }
@@ -83,16 +101,13 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
     function addSigners(address[] calldata newSigners, uint64 newThreshold, uint256 deadline, bytes calldata signatures)
         external
     {
-        require(block.timestamp <= deadline, DeadlineExpired());
         require(newSigners.length != 0, EmptySignersArray());
 
-        bytes32 structHash =
-            keccak256(abi.encode(ADD_SIGNERS_TYPEHASH, newSigners.hashArrayed(), newThreshold, signerNonce, deadline));
-        bytes32 digest = _hashTypedDataV4(structHash);
-
-        require(_rawSignatureValidation(digest, signatures), InvalidSignature());
-
-        signerNonce++;
+        _verifyQuorumOp(
+            keccak256(abi.encode(ADD_SIGNERS_TYPEHASH, newSigners.hashArrayed(), newThreshold, signerNonce, deadline)),
+            deadline,
+            signatures
+        );
 
         _addSigners(newSigners.toAddressBytesArray());
         _setThreshold(newThreshold);
@@ -104,20 +119,38 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
         uint256 deadline,
         bytes calldata signatures
     ) external {
-        require(block.timestamp <= deadline, DeadlineExpired());
         require(signersToRemove.length != 0, EmptySignersArray());
 
-        bytes32 structHash = keccak256(
-            abi.encode(REMOVE_SIGNERS_TYPEHASH, signersToRemove.hashArrayed(), newThreshold, signerNonce, deadline)
+        _verifyQuorumOp(
+            keccak256(
+                abi.encode(REMOVE_SIGNERS_TYPEHASH, signersToRemove.hashArrayed(), newThreshold, signerNonce, deadline)
+            ),
+            deadline,
+            signatures
         );
-        bytes32 digest = _hashTypedDataV4(structHash);
-
-        require(_rawSignatureValidation(digest, signatures), InvalidSignature());
-
-        signerNonce++;
 
         _setThreshold(newThreshold);
         _removeSigners(signersToRemove.toAddressBytesArray());
+    }
+
+    function setRateLimit(uint256 newCapacity, uint256 newRefillInterval, uint256 deadline, bytes calldata signatures)
+        external
+    {
+        require(newCapacity > 0 && newRefillInterval >= MIN_REFILL_INTERVAL, InvalidRateLimitParams());
+
+        _verifyQuorumOp(
+            keccak256(abi.encode(SET_RATE_LIMIT_TYPEHASH, newCapacity, newRefillInterval, signerNonce, deadline)),
+            deadline,
+            signatures
+        );
+
+        bucketCapacity = newCapacity;
+        refillInterval = newRefillInterval;
+        if (availableTokens > newCapacity) {
+            availableTokens = newCapacity;
+        }
+
+        emit RateLimitUpdated(newCapacity, newRefillInterval);
     }
 
     function deposit(address token, uint256 amount) external payable override nonReentrant {
@@ -143,6 +176,8 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
         require(user != address(0), InvalidUser());
         require(amount != 0, IDeposit.ZeroAmount());
 
+        _enforceRateLimit();
+
         bytes32 withdrawalId = Utils.getWithdrawalId(address(this), user, token, amount, nonce);
         require(withdrawals[withdrawalId].createdAt == 0, IWithdraw.WithdrawalAlreadyExists());
 
@@ -163,12 +198,6 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
         address initiator = msg.sender;
         withdrawalApprovals[withdrawalId][initiator] = true;
         emit WithdrawalApproved(withdrawalId, initiator, 1);
-
-        // Check if threshold is already met (e.g., threshold = 1)
-        if (requiredThreshold == 1) {
-            _executeWithdrawal(withdrawals[withdrawalId]);
-            emit WithdrawFinalized(withdrawalId, true);
-        }
 
         return withdrawalId;
     }
@@ -205,6 +234,37 @@ contract ThresholdCustody is IWithdraw, IDeposit, ReentrancyGuard, EIP712, Multi
     }
 
     // --- Internal ---
+
+    function _verifyQuorumOp(bytes32 structHash, uint256 deadline, bytes calldata signatures) internal {
+        require(block.timestamp <= deadline, DeadlineExpired());
+
+        bytes32 digest = _hashTypedDataV4(structHash);
+        require(_rawSignatureValidation(digest, signatures), InvalidSignature());
+
+        signerNonce++;
+    }
+
+    function _setThreshold(uint64 newThreshold) internal virtual override {
+        require(newThreshold >= MIN_THRESHOLD, ThresholdTooLow());
+        super._setThreshold(newThreshold);
+    }
+
+    function _enforceRateLimit() internal {
+        uint256 _refillInterval = refillInterval;
+        uint256 elapsed = block.timestamp - lastRefillTime;
+        uint256 refill = elapsed / _refillInterval;
+        if (refill > 0) {
+            uint256 _bucketCapacity = bucketCapacity;
+            availableTokens += refill;
+            if (availableTokens > _bucketCapacity) {
+                availableTokens = _bucketCapacity;
+            }
+            lastRefillTime += refill * _refillInterval;
+        }
+
+        require(availableTokens > 0, RateLimitExceeded());
+        availableTokens--;
+    }
 
     function _executeWithdrawal(WithdrawalRequest storage request) internal {
         address user = request.user;

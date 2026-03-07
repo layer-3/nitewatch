@@ -193,6 +193,20 @@ func (svc *Service) RunWorkerWithContext(ctx context.Context) error {
 	})
 
 	g.Go(func() error {
+		svc.Logger.Info("Starting deferred rejection processor")
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-ticker.C:
+				svc.processDeferredRejections(ctx)
+			}
+		}
+	})
+
+	g.Go(func() error {
 		<-ctx.Done()
 		svc.Logger.Info("Shutting down health endpoint server")
 		ctxShutdown, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
@@ -246,14 +260,25 @@ func (svc *Service) processWithdrawal(ctx context.Context, event *custody.Withdr
 		txAuth.Context = ctx
 		tx, txErr := svc.contract.RejectWithdraw(&txAuth, event.WithdrawalID)
 		if txErr != nil {
-			logger.Error("Failed to reject withdrawal", "error", txErr)
-			baseModel.Decision = "error"
-			baseModel.Reason = fmt.Sprintf("reject tx failed: %v", txErr)
+			// Rejection may fail if the contract requires expiry (ThresholdCustody).
+			// Schedule a deferred retry.
+			logger.Warn("Immediate reject failed, deferring until expiry", "error", txErr)
+			pending := &store.PendingRejectionModel{
+				WithdrawalID: wID,
+				Reason:       err.Error(),
+			}
+			if dbErr := svc.store.SavePendingRejection(pending); dbErr != nil {
+				logger.Error("Failed to save pending rejection", "error", dbErr)
+			}
+			baseModel.Decision = "rejected"
+			baseModel.Reason = err.Error()
 			svc.recordEvent(logger, &baseModel)
 			return
 		}
+
 		logger.Info("Sent reject transaction", "tx_hash", tx.Hash().Hex())
-		if _, txErr = bind.WaitMined(ctx, svc.ethClient, tx); txErr != nil {
+		receipt, txErr := bind.WaitMined(ctx, svc.ethClient, tx)
+		if txErr != nil {
 			logger.Error("Failed waiting for reject tx to be mined", "error", txErr)
 			baseModel.Decision = "error"
 			baseModel.Reason = fmt.Sprintf("reject tx mining failed: %v", txErr)
@@ -261,8 +286,22 @@ func (svc *Service) processWithdrawal(ctx context.Context, event *custody.Withdr
 			return
 		}
 
-		baseModel.Decision = "rejected"
-		baseModel.Reason = err.Error()
+		if receipt.Status == 1 {
+			baseModel.Decision = "rejected"
+			baseModel.Reason = err.Error()
+		} else {
+			// On-chain revert (e.g. WithdrawalNotExpired). Defer the rejection.
+			logger.Warn("Reject tx reverted on-chain, deferring until expiry")
+			pending := &store.PendingRejectionModel{
+				WithdrawalID: wID,
+				Reason:       err.Error(),
+			}
+			if dbErr := svc.store.SavePendingRejection(pending); dbErr != nil {
+				logger.Error("Failed to save pending rejection", "error", dbErr)
+			}
+			baseModel.Decision = "rejected"
+			baseModel.Reason = err.Error()
+		}
 		svc.recordEvent(logger, &baseModel)
 		return
 	}
@@ -290,7 +329,30 @@ func (svc *Service) processWithdrawal(ctx context.Context, event *custody.Withdr
 		return
 	}
 
-	if receipt.Status == 1 {
+	if receipt.Status != 1 {
+		logger.Error("Withdrawal finalization tx reverted")
+		baseModel.Decision = "error"
+		baseModel.Reason = "finalize tx reverted on-chain"
+		svc.recordEvent(logger, &baseModel)
+		return
+	}
+
+	// Check receipt logs for WithdrawFinalized event to confirm actual execution.
+	// In ThresholdCustody, finalizeWithdraw adds an approval; the withdrawal only
+	// executes when the threshold is met and emits WithdrawFinalized.
+	executed := false
+	for _, log := range receipt.Logs {
+		finalized, parseErr := svc.contract.ParseWithdrawFinalized(*log)
+		if parseErr != nil {
+			continue
+		}
+		if finalized.WithdrawalId == event.WithdrawalID && finalized.Success {
+			executed = true
+			break
+		}
+	}
+
+	if executed {
 		logger.Info("Withdrawal finalized successfully on-chain")
 
 		record := &custody.Withdrawal{
@@ -309,10 +371,51 @@ func (svc *Service) processWithdrawal(ctx context.Context, event *custody.Withdr
 		baseModel.Decision = "approved"
 		svc.recordEvent(logger, &baseModel)
 	} else {
-		logger.Error("Withdrawal finalization tx reverted")
-		baseModel.Decision = "error"
-		baseModel.Reason = "finalize tx reverted on-chain"
+		logger.Info("Approval recorded on-chain, threshold not yet met")
+		baseModel.Decision = "pending"
+		baseModel.Reason = "approval added, awaiting threshold"
 		svc.recordEvent(logger, &baseModel)
+	}
+}
+
+func (svc *Service) processDeferredRejections(ctx context.Context) {
+	pending, err := svc.store.GetPendingRejections()
+	if err != nil {
+		svc.Logger.Error("Failed to get pending rejections", "error", err)
+		return
+	}
+
+	for _, p := range pending {
+		logger := svc.Logger.With("withdrawal_id", p.WithdrawalID, "reason", p.Reason)
+
+		var wID [32]byte
+		copy(wID[:], common.FromHex(p.WithdrawalID))
+
+		txAuth := *svc.auth
+		txAuth.Context = ctx
+		tx, txErr := svc.contract.RejectWithdraw(&txAuth, wID)
+		if txErr != nil {
+			// Will retry on next tick; may still be before expiry
+			logger.Warn("Deferred reject tx failed (may not be expired yet)", "error", txErr)
+			continue
+		}
+
+		logger.Info("Sent deferred reject transaction", "tx_hash", tx.Hash().Hex())
+		receipt, txErr := bind.WaitMined(ctx, svc.ethClient, tx)
+		if txErr != nil {
+			logger.Error("Deferred reject tx mining failed", "error", txErr)
+			continue
+		}
+
+		if receipt.Status == 1 {
+			logger.Info("Deferred rejection finalized on-chain")
+		} else {
+			logger.Warn("Deferred rejection tx reverted (may already be finalized)")
+		}
+
+		if err := svc.store.CompletePendingRejection(p.WithdrawalID); err != nil {
+			logger.Error("Failed to mark pending rejection as completed", "error", err)
+		}
 	}
 }
 
