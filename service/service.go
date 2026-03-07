@@ -30,7 +30,14 @@ import (
 	"github.com/layer-3/nitewatch/internal/store"
 )
 
-const gasEstimateBufferPercent = 20
+// gasEstimateBufferPercent is applied on top of eth_estimateGas results.
+// The EVM's 63/64 gas rule (EIP-150) for CALL instructions means the minimum
+// gas *limit* can be significantly higher than the gas *consumed*. When
+// on-chain state changes between estimation and mining (e.g., another signer's
+// approval shifts finalizeWithdraw from the "record approval" path into the
+// "execute withdrawal + ETH transfer" path), the gas deficit can reach ~33%.
+// A 50% buffer covers this with headroom.
+const gasEstimateBufferPercent = 50
 
 type httpServer struct {
 	Engine *gin.Engine

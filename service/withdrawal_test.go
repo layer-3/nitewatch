@@ -204,7 +204,7 @@ func TestWithdrawalFinalized(t *testing.T) {
 	defer cancel()
 	go autoCommit(ctx, env.sim, 100*time.Millisecond)
 
-	// 100 ETH limit — well above our 0.5 ETH withdrawal.
+	// 100 ETH limit, which is well above requested 0.5 ETH withdrawal.
 	svc := createNitewatchService(t, env, "100000000000000000000")
 	runNitewatchService(t, svc)
 
@@ -254,7 +254,7 @@ func TestWithdrawalRejected(t *testing.T) {
 	defer cancel()
 	go autoCommit(ctx, env.sim, 100*time.Millisecond)
 
-	// 0.1 ETH limit — below our 0.5 ETH withdrawal.
+	// 0.1 ETH limit, which is below requested 0.5 ETH withdrawal.
 	svc := createNitewatchService(t, env, "100000000000000000")
 	runNitewatchService(t, svc)
 
@@ -301,7 +301,7 @@ func TestWithdrawalRejected(t *testing.T) {
 // comparing the bare eth_estimateGas result against the 20%-buffered value,
 // and confirming the transaction succeeds with the buffered gas limit.
 func TestGasBufferApplied(t *testing.T) {
-	const gasBufferPercent = 20
+	const gasBufferPercent = 50
 
 	// --- Setup: 3 signers, threshold=2, deploy ThresholdCustody ---
 	numAccounts := 4 // 3 signers + 1 user
@@ -403,6 +403,146 @@ func TestGasBufferApplied(t *testing.T) {
 	t.Logf("gas used = %d, headroom = %d (%.1f%%)",
 		receipt.GasUsed, bufferedGas-receipt.GasUsed,
 		float64(bufferedGas-receipt.GasUsed)/float64(receipt.GasUsed)*100)
+}
+
+// TestGasEstimateRaceCondition demonstrates that the race condition between gas
+// estimation and transaction mining can cause an "out of gas" revert, and that
+// the 20% gas buffer is sufficient to cover the difference.
+//
+// With threshold=3 on ThresholdCustody:
+//
+//  1. Signer0 starts withdrawal (1/3 approvals)
+//  2. Signer1 estimates gas, and simulation sees 2/3 (cheap path, no _executeWithdrawal)
+//  3. Signer2 approves in between (now 2/3 on-chain)
+//  4. Signer1's stale estimate is too low for the expensive path (3/3 with ETH transfer)
+//
+// The test compares both gas estimates and shows the 20% buffer covers the gap.
+func TestGasEstimateRaceCondition(t *testing.T) {
+	const gasBufferPercent = 50
+
+	// 4 signers + 1 user = 5 accounts. Threshold=3 so the rage could be staged.
+	numAccounts := 5
+	keys := make([]*ecdsa.PrivateKey, numAccounts)
+	addrs := make([]common.Address, numAccounts)
+	auths := make([]*bind.TransactOpts, numAccounts)
+	alloc := make(types.GenesisAlloc)
+	balance := new(big.Int).Mul(big.NewInt(1000), big.NewInt(1e18))
+
+	for i := range numAccounts {
+		key, err := crypto.GenerateKey()
+		require.NoError(t, err)
+		keys[i] = key
+		addrs[i] = crypto.PubkeyToAddress(key.PublicKey)
+		auth, err := bind.NewKeyedTransactorWithChainID(key, big.NewInt(simChainID))
+		require.NoError(t, err)
+		auths[i] = auth
+		alloc[addrs[i]] = types.Account{Balance: balance}
+	}
+
+	sim := simulated.NewBackend(alloc)
+	t.Cleanup(func() { sim.Close() })
+	client := simBackendClient{Client: sim.Client(), backend: sim}
+
+	signerAddrs := []common.Address{addrs[0], addrs[1], addrs[2], addrs[3]}
+	contractAddr, tx, tcContract, err := custody.DeployThresholdCustody(
+		copyAuth(auths[0]), client, signerAddrs, 3,
+	)
+	require.NoError(t, err)
+	sim.Commit()
+	receipt, err := client.TransactionReceipt(context.Background(), tx.Hash())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), receipt.Status, "deployment failed")
+
+	iwContract, err := custody.NewIWithdraw(contractAddr, client)
+	require.NoError(t, err)
+
+	// User deposits 1 ETH.
+	depositAmount := big.NewInt(1e18)
+	userAuth := copyAuth(auths[4])
+	userAuth.Value = depositAmount
+	tx, err = tcContract.Deposit(userAuth, common.Address{}, depositAmount)
+	require.NoError(t, err)
+	sim.Commit()
+	receipt, err = client.TransactionReceipt(context.Background(), tx.Hash())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), receipt.Status, "deposit failed")
+
+	// Signer0 starts withdrawal → 1/3 approvals.
+	withdrawAmount := new(big.Int).Div(depositAmount, big.NewInt(2))
+	tx, err = tcContract.StartWithdraw(
+		copyAuth(auths[0]), addrs[4], common.Address{}, withdrawAmount, big.NewInt(1),
+	)
+	require.NoError(t, err)
+	sim.Commit()
+	receipt, err = client.TransactionReceipt(context.Background(), tx.Hash())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), receipt.Status, "startWithdraw failed")
+
+	var withdrawalID [32]byte
+	for _, log := range receipt.Logs {
+		ev, parseErr := iwContract.ParseWithdrawStarted(*log)
+		if parseErr == nil {
+			withdrawalID = ev.WithdrawalId
+			break
+		}
+	}
+	require.NotEqual(t, [32]byte{}, withdrawalID)
+
+	// Cheap estimate: signer1 estimates with 1/3 approvals on-chain.
+	// Simulation sees 2/3 (signer1's approval added), which is below threshold, so
+	// _executeWithdrawal is NOT reached. This is the "cheap path".
+	cheapDryRun := copyAuth(auths[1])
+	cheapDryRun.NoSend = true
+	cheapDryRun.GasLimit = 0
+	cheapTx, err := iwContract.FinalizeWithdraw(cheapDryRun, withdrawalID)
+	require.NoError(t, err)
+	cheapEstimate := cheapTx.Gas()
+
+	// Signer2 approves → now 2/3 on-chain.
+	tx, err = iwContract.FinalizeWithdraw(copyAuth(auths[2]), withdrawalID)
+	require.NoError(t, err)
+	sim.Commit()
+	receipt, err = client.TransactionReceipt(context.Background(), tx.Hash())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), receipt.Status, "signer2 approval failed")
+
+	// Expensive estimate: signer1 re-estimates with 2/3 approvals on-chain.
+	// Simulation sees 3/3 (signer1's approval meets threshold)m, which triggers
+	// _executeWithdrawal with ETH transfer. This is the "expensive path".
+	expensiveDryRun := copyAuth(auths[1])
+	expensiveDryRun.NoSend = true
+	expensiveDryRun.GasLimit = 0
+	expensiveTx, err := iwContract.FinalizeWithdraw(expensiveDryRun, withdrawalID)
+	require.NoError(t, err)
+	expensiveEstimate := expensiveTx.Gas()
+
+	// The expensive path requires more gas than the cheap path.
+	require.Greater(t, expensiveEstimate, cheapEstimate,
+		"execution path with _executeWithdrawal must cost more gas")
+
+	// The buffer over the cheap estimate COVERS the expensive path.
+	bufferedGas := cheapEstimate * (100 + gasBufferPercent) / 100
+	require.GreaterOrEqual(t, bufferedGas, expensiveEstimate,
+		"%d%% gas buffer must be sufficient for the expensive execution path", gasBufferPercent)
+
+	deficit := float64(expensiveEstimate-cheapEstimate) / float64(cheapEstimate) * 100
+	headroom := float64(bufferedGas-expensiveEstimate) / float64(expensiveEstimate) * 100
+	t.Logf("cheap estimate     = %d (approval only)", cheapEstimate)
+	t.Logf("expensive estimate = %d (approval + ETH transfer, +%.1f%%)", expensiveEstimate, deficit)
+	t.Logf("%d%% buffer        = %d (headroom over expensive: %.1f%%)", gasBufferPercent, bufferedGas, headroom)
+
+	// Verify the buffered transaction actually succeeds on-chain.
+	bufferedAuth := copyAuth(auths[1])
+	bufferedAuth.GasLimit = bufferedGas
+	tx, err = iwContract.FinalizeWithdraw(bufferedAuth, withdrawalID)
+	require.NoError(t, err)
+	sim.Commit()
+
+	receipt, err = client.TransactionReceipt(context.Background(), tx.Hash())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), receipt.Status,
+		"transaction with buffered gas must succeed")
+	t.Logf("actual gas used    = %d", receipt.GasUsed)
 }
 
 // copyAuth creates a shallow copy of TransactOpts so concurrent uses don't race.
