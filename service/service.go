@@ -79,6 +79,10 @@ func New(conf config.Config) (*Service, error) {
 // NewWithBackend creates a Service using a pre-existing Ethereum backend.
 // The caller is responsible for closing the backend when done.
 func NewWithBackend(conf config.Config, client custody.EthBackend) (*Service, error) {
+	if conf.Blockchain.ConfirmationBlocks == 0 {
+		return nil, fmt.Errorf("confirmation_blocks must be > 0")
+	}
+
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil)).With("service", "nitewatch")
 
 	srv := newHTTPServer(conf.ListenAddr)
