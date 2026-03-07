@@ -15,6 +15,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -28,6 +29,8 @@ import (
 	"github.com/layer-3/nitewatch/internal/checker"
 	"github.com/layer-3/nitewatch/internal/store"
 )
+
+const gasEstimateBufferPercent = 20
 
 type httpServer struct {
 	Engine *gin.Engine
@@ -231,6 +234,36 @@ func (svc *Service) RunWorkerWithContext(ctx context.Context) error {
 	return g.Wait()
 }
 
+// finalizeWithdrawWithGasBuffer sends a FinalizeWithdraw transaction with a
+// gas limit buffer above the eth_estimateGas result. This prevents "out of
+// gas" reverts when on-chain state changes between estimation and mining —
+// e.g. another signer's approval lands first, causing this transaction to
+// trigger _executeWithdrawal (ERC20/ETH transfer), a more expensive code
+// path than the one estimated.
+func (svc *Service) finalizeWithdrawWithGasBuffer(txAuth *bind.TransactOpts, withdrawalID [32]byte) (*types.Transaction, error) {
+	dryRun := *txAuth
+	dryRun.NoSend = true
+	estTx, err := svc.contract.FinalizeWithdraw(&dryRun, withdrawalID)
+	if err != nil {
+		return nil, err
+	}
+	txAuth.GasLimit = estTx.Gas() * (100 + gasEstimateBufferPercent) / 100
+	return svc.contract.FinalizeWithdraw(txAuth, withdrawalID)
+}
+
+// rejectWithdrawWithGasBuffer sends a RejectWithdraw transaction with a gas
+// limit buffer. See finalizeWithdrawWithGasBuffer for rationale.
+func (svc *Service) rejectWithdrawWithGasBuffer(txAuth *bind.TransactOpts, withdrawalID [32]byte) (*types.Transaction, error) {
+	dryRun := *txAuth
+	dryRun.NoSend = true
+	estTx, err := svc.contract.RejectWithdraw(&dryRun, withdrawalID)
+	if err != nil {
+		return nil, err
+	}
+	txAuth.GasLimit = estTx.Gas() * (100 + gasEstimateBufferPercent) / 100
+	return svc.contract.RejectWithdraw(txAuth, withdrawalID)
+}
+
 func (svc *Service) processWithdrawal(ctx context.Context, event *custody.WithdrawStartedEvent) {
 	wID := common.Hash(event.WithdrawalID).Hex()
 	logger := svc.Logger.With(
@@ -262,7 +295,7 @@ func (svc *Service) processWithdrawal(ctx context.Context, event *custody.Withdr
 
 		txAuth := *svc.auth
 		txAuth.Context = ctx
-		tx, txErr := svc.contract.RejectWithdraw(&txAuth, event.WithdrawalID)
+		tx, txErr := svc.rejectWithdrawWithGasBuffer(&txAuth, event.WithdrawalID)
 		if txErr != nil {
 			// Rejection may fail if the contract requires expiry (ThresholdCustody).
 			// Schedule a deferred retry.
@@ -313,7 +346,7 @@ func (svc *Service) processWithdrawal(ctx context.Context, event *custody.Withdr
 	txAuth := *svc.auth
 	txAuth.Context = ctx
 
-	tx, err := svc.contract.FinalizeWithdraw(&txAuth, event.WithdrawalID)
+	tx, err := svc.finalizeWithdrawWithGasBuffer(&txAuth, event.WithdrawalID)
 	if err != nil {
 		logger.Error("Failed to finalize withdrawal", "error", err)
 		baseModel.Decision = "error"
@@ -397,7 +430,7 @@ func (svc *Service) processDeferredRejections(ctx context.Context) {
 
 		txAuth := *svc.auth
 		txAuth.Context = ctx
-		tx, txErr := svc.contract.RejectWithdraw(&txAuth, wID)
+		tx, txErr := svc.rejectWithdrawWithGasBuffer(&txAuth, wID)
 		if txErr != nil {
 			// Will retry on next tick; may still be before expiry
 			logger.Warn("Deferred reject tx failed (may not be expired yet)", "error", txErr)
