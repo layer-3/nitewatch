@@ -243,7 +243,7 @@ func (svc *Service) RunWorkerWithContext(ctx context.Context) error {
 
 // finalizeWithdrawWithGasBuffer sends a FinalizeWithdraw transaction with a
 // gas limit buffer above the eth_estimateGas result. This prevents "out of
-// gas" reverts when on-chain state changes between estimation and mining —
+// gas" reverts when on-chain state changes between estimation and mining:
 // e.g. another signer's approval lands first, causing this transaction to
 // trigger _executeWithdrawal (ERC20/ETH transfer), a more expensive code
 // path than the one estimated.
@@ -514,7 +514,7 @@ func verifySigner(client custody.EthBackend, contract common.Address, signerAddr
 			return nil
 		}
 
-		// Transient RPC/network error — retry once before giving up.
+		// Transient RPC/network error. Retry once before giving up.
 		logger.Warn("isSigner call failed, retrying once", "error", err)
 		time.Sleep(2 * time.Second)
 
