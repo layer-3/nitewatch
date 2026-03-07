@@ -461,7 +461,7 @@ func verifySigner(client custody.EthBackend, contract common.Address, signerAddr
 		return fmt.Errorf("failed to bind ThresholdCustody caller: %w", err)
 	}
 
-	ok, err := caller.IsSigner(nil, signerAddr)
+	ok, err := caller.IsSigner0(nil, signerAddr)
 	if err != nil {
 		if isContractRevert(err) {
 			// The contract does not support isSigner (e.g. SimpleCustody in tests).
@@ -474,7 +474,7 @@ func verifySigner(client custody.EthBackend, contract common.Address, signerAddr
 		logger.Warn("isSigner call failed, retrying once", "error", err)
 		time.Sleep(2 * time.Second)
 
-		ok, err = caller.IsSigner(nil, signerAddr)
+		ok, err = caller.IsSigner0(nil, signerAddr)
 		if err != nil {
 			return fmt.Errorf("failed to verify signer address (RPC error): %w", err)
 		}

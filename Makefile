@@ -24,5 +24,6 @@ custody/simple_custody.go: contracts/evm/out/.build-sentinel
 
 custody/threshold_custody.go: contracts/evm/out/.build-sentinel
 	jq .abi contracts/evm/out/ThresholdCustody.sol/ThresholdCustody.json > custody/ThresholdCustody.abi
-	abigen --abi custody/ThresholdCustody.abi --pkg custody --type ThresholdCustody --out $@
+	jq -r .bytecode.object contracts/evm/out/ThresholdCustody.sol/ThresholdCustody.json > custody/ThresholdCustody.bin
+	abigen --abi custody/ThresholdCustody.abi --bin custody/ThresholdCustody.bin --pkg custody --type ThresholdCustody --out $@
 
