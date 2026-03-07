@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
@@ -16,6 +17,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/sync/errgroup"
 	"gorm.io/driver/sqlite"
@@ -120,6 +122,14 @@ func NewWithBackend(conf config.Config, client custody.EthBackend) (*Service, er
 	}
 
 	addr := common.HexToAddress(conf.Blockchain.ContractAddr)
+
+	// Verify that the configured private key's address is authorized on the
+	// contract before starting. This catches misconfiguration early rather
+	// than failing on the first finalizeWithdraw/rejectWithdraw call.
+	if err := verifySigner(client, addr, auth.From, logger); err != nil {
+		return nil, err
+	}
+
 	withdrawContract, err := custody.NewIWithdraw(addr, client)
 	if err != nil {
 		return nil, fmt.Errorf("failed to bind IWithdraw contract: %w", err)
@@ -338,6 +348,49 @@ func parseLimitsConfig(lc config.LimitsConfig) (map[common.Address]checker.Limit
 		limits[addr] = l
 	}
 	return limits, nil
+}
+
+// verifySigner checks that signerAddr is authorized on the custody contract
+// by calling isSigner(address) via the ThresholdCustody binding.
+func verifySigner(client custody.EthBackend, contract common.Address, signerAddr common.Address, logger *slog.Logger) error {
+	caller, err := custody.NewThresholdCustodyCaller(contract, client)
+	if err != nil {
+		return fmt.Errorf("failed to bind ThresholdCustody caller: %w", err)
+	}
+
+	ok, err := caller.IsSigner(nil, signerAddr)
+	if err != nil {
+		if isContractRevert(err) {
+			// The contract does not support isSigner (e.g. SimpleCustody in tests).
+			logger.Warn("Contract does not support isSigner, skipping signer verification",
+				"address", signerAddr.Hex(), "contract", contract.Hex())
+			return nil
+		}
+
+		// Transient RPC/network error — retry once before giving up.
+		logger.Warn("isSigner call failed, retrying once", "error", err)
+		time.Sleep(2 * time.Second)
+
+		ok, err = caller.IsSigner(nil, signerAddr)
+		if err != nil {
+			return fmt.Errorf("failed to verify signer address (RPC error): %w", err)
+		}
+	}
+
+	if !ok {
+		return fmt.Errorf("address %s is not a registered signer on contract %s", signerAddr.Hex(), contract.Hex())
+	}
+
+	logger.Info("Signer address verified via isSigner", "address", signerAddr.Hex())
+	return nil
+}
+
+// isContractRevert reports whether err indicates the EVM reverted execution
+// (JSON-RPC error code 3). This covers unrecognized function selectors,
+// explicit require/revert failures, and any other on-chain revert.
+func isContractRevert(err error) bool {
+	var rpcErr rpc.Error
+	return errors.As(err, &rpcErr) && rpcErr.ErrorCode() == 3
 }
 
 func parseUserOverrides(overrides map[string]config.LimitsConfig) (map[common.Address]map[common.Address]checker.Limit, error) {
