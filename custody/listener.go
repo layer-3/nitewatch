@@ -376,6 +376,8 @@ func reconcileBlockRange(
 	topics [][]common.Hash,
 	historicalCh chan types.Log,
 ) {
+	defer close(historicalCh)
+
 	var backOffCount atomic.Uint64
 	const blockStep = 10000
 	startBlock := lastBlock
