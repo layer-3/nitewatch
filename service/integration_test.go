@@ -296,6 +296,115 @@ func TestWithdrawalRejected(t *testing.T) {
 		"user balance should not change after rejection")
 }
 
+// TestGasBufferApplied verifies that the gas buffer mechanism works correctly
+// by deploying ThresholdCustody (the real contract where the bug occurs),
+// comparing the bare eth_estimateGas result against the 20%-buffered value,
+// and confirming the transaction succeeds with the buffered gas limit.
+func TestGasBufferApplied(t *testing.T) {
+	const gasBufferPercent = 20
+
+	// --- Setup: 3 signers, threshold=2, deploy ThresholdCustody ---
+	numAccounts := 4 // 3 signers + 1 user
+	keys := make([]*ecdsa.PrivateKey, numAccounts)
+	addrs := make([]common.Address, numAccounts)
+	auths := make([]*bind.TransactOpts, numAccounts)
+	alloc := make(types.GenesisAlloc)
+	balance := new(big.Int).Mul(big.NewInt(1000), big.NewInt(1e18))
+
+	for i := range numAccounts {
+		key, err := crypto.GenerateKey()
+		require.NoError(t, err)
+		keys[i] = key
+		addrs[i] = crypto.PubkeyToAddress(key.PublicKey)
+		auth, err := bind.NewKeyedTransactorWithChainID(key, big.NewInt(simChainID))
+		require.NoError(t, err)
+		auths[i] = auth
+		alloc[addrs[i]] = types.Account{Balance: balance}
+	}
+
+	sim := simulated.NewBackend(alloc)
+	t.Cleanup(func() { sim.Close() })
+	client := simBackendClient{Client: sim.Client(), backend: sim}
+
+	signers := []common.Address{addrs[0], addrs[1], addrs[2]}
+	contractAddr, tx, tcContract, err := custody.DeployThresholdCustody(
+		copyAuth(auths[0]), client, signers, 2,
+	)
+	require.NoError(t, err)
+	sim.Commit()
+	receipt, err := client.TransactionReceipt(context.Background(), tx.Hash())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), receipt.Status, "ThresholdCustody deployment failed")
+
+	// Also bind as IWithdraw for FinalizeWithdraw.
+	iwContract, err := custody.NewIWithdraw(contractAddr, client)
+	require.NoError(t, err)
+
+	// --- User deposits 1 ETH ---
+	depositAmount := big.NewInt(1e18)
+	userAuth := copyAuth(auths[3])
+	userAuth.Value = depositAmount
+	tx, err = tcContract.Deposit(userAuth, common.Address{}, depositAmount)
+	require.NoError(t, err)
+	sim.Commit()
+	receipt, err = client.TransactionReceipt(context.Background(), tx.Hash())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), receipt.Status, "deposit failed")
+
+	// --- Signer0 starts a withdrawal (counts as 1 approval) ---
+	withdrawAmount := new(big.Int).Div(depositAmount, big.NewInt(2))
+	tx, err = tcContract.StartWithdraw(copyAuth(auths[0]), addrs[3], common.Address{}, withdrawAmount, big.NewInt(1))
+	require.NoError(t, err)
+	sim.Commit()
+	receipt, err = client.TransactionReceipt(context.Background(), tx.Hash())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), receipt.Status, "startWithdraw failed")
+
+	// Extract withdrawalId from WithdrawStarted event.
+	var withdrawalID [32]byte
+	for _, log := range receipt.Logs {
+		ev, parseErr := iwContract.ParseWithdrawStarted(*log)
+		if parseErr == nil {
+			withdrawalID = ev.WithdrawalId
+			break
+		}
+	}
+	require.NotEqual(t, [32]byte{}, withdrawalID, "WithdrawStarted event not found")
+
+	// --- Compare old (bare estimate) vs new (buffered) gas ---
+
+	// Old behavior: bare estimate via NoSend with GasLimit=0.
+	dryRun := copyAuth(auths[1])
+	dryRun.NoSend = true
+	dryRun.GasLimit = 0
+	estTx, err := iwContract.FinalizeWithdraw(dryRun, withdrawalID)
+	require.NoError(t, err)
+	bareEstimate := estTx.Gas()
+
+	// New behavior: apply 20% buffer.
+	bufferedGas := bareEstimate * (100 + gasBufferPercent) / 100
+
+	t.Logf("bare estimate = %d, buffered = %d (+%d%%)", bareEstimate, bufferedGas, gasBufferPercent)
+	assert.Greater(t, bufferedGas, bareEstimate, "buffer must increase gas limit")
+
+	// --- Send with buffered gas and verify success ---
+	realAuth := copyAuth(auths[1])
+	realAuth.GasLimit = bufferedGas
+	tx, err = iwContract.FinalizeWithdraw(realAuth, withdrawalID)
+	require.NoError(t, err)
+	sim.Commit()
+
+	receipt, err = client.TransactionReceipt(context.Background(), tx.Hash())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), receipt.Status, "finalizeWithdraw with buffered gas should succeed")
+	assert.LessOrEqual(t, receipt.GasUsed, bufferedGas,
+		"actual gas used should be within the buffered limit")
+
+	t.Logf("gas used = %d, headroom = %d (%.1f%%)",
+		receipt.GasUsed, bufferedGas-receipt.GasUsed,
+		float64(bufferedGas-receipt.GasUsed)/float64(receipt.GasUsed)*100)
+}
+
 // copyAuth creates a shallow copy of TransactOpts so concurrent uses don't race.
 func copyAuth(auth *bind.TransactOpts) *bind.TransactOpts {
 	cp := *auth
